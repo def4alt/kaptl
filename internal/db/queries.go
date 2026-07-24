@@ -31,14 +31,14 @@ func (d *DB) GetOrCreateUser(ctx context.Context, telegramID int64, username, fi
 
 // ─── Accounts ─────────────────────────────────────────────
 
-func (d *DB) CreateAccount(ctx context.Context, userID int64, name, accType, currency string, initialBalance float64) (*models.Account, error) {
+func (d *DB) CreateAccount(ctx context.Context, userID int64, name, emoji, currency string, initialBalance float64) (*models.Account, error) {
 	a := &models.Account{}
 	err := d.Pool.QueryRow(ctx, `
-		INSERT INTO accounts (user_id, name, type, currency, initial_balance)
+		INSERT INTO accounts (user_id, name, emoji, currency, initial_balance)
 		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, user_id, name, type, currency, initial_balance, created_at
-	`, userID, name, accType, currency, initialBalance).Scan(
-		&a.ID, &a.UserID, &a.Name, &a.Type, &a.Currency, &a.InitialBalance, &a.CreatedAt,
+		RETURNING id, user_id, name, emoji, currency, initial_balance, created_at
+	`, userID, name, emoji, currency, initialBalance).Scan(
+		&a.ID, &a.UserID, &a.Name, &a.Emoji, &a.Currency, &a.InitialBalance, &a.CreatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create account: %w", err)
@@ -48,7 +48,7 @@ func (d *DB) CreateAccount(ctx context.Context, userID int64, name, accType, cur
 
 func (d *DB) GetAccounts(ctx context.Context, userID int64) ([]models.Account, error) {
 	rows, err := d.Pool.Query(ctx, `
-		SELECT a.id, a.user_id, a.name, a.type, a.currency, a.initial_balance, a.created_at,
+		SELECT a.id, a.user_id, a.name, a.emoji, a.currency, a.initial_balance, a.created_at,
 			COALESCE(a.initial_balance, 0) +
 			COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) -
 			COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount ELSE 0 END), 0) +
@@ -70,9 +70,9 @@ func (d *DB) GetAccounts(ctx context.Context, userID int64) ([]models.Account, e
 func (d *DB) GetAccount(ctx context.Context, id int64) (*models.Account, error) {
 	a := &models.Account{}
 	err := d.Pool.QueryRow(ctx, `
-		SELECT id, user_id, name, type, currency, initial_balance, created_at
+		SELECT id, user_id, name, emoji, currency, initial_balance, created_at
 		FROM accounts WHERE id = $1
-	`, id).Scan(&a.ID, &a.UserID, &a.Name, &a.Type, &a.Currency, &a.InitialBalance, &a.CreatedAt)
+	`, id).Scan(&a.ID, &a.UserID, &a.Name, &a.Emoji, &a.Currency, &a.InitialBalance, &a.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("get account: %w", err)
 	}

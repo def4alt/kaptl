@@ -90,9 +90,8 @@ func accountKeyboard(accs []models.Account) *tele.ReplyMarkup {
 	var rows []tele.Row
 
 	for _, a := range accs {
-		emoji := accountEmoji(a.Type)
 		btn := menu.Data(
-			fmt.Sprintf("%s %s", emoji, a.Name),
+			fmt.Sprintf("%s %s", a.Emoji, a.Name),
 			callbackData(cbAcc, a.ID),
 		)
 		rows = append(rows, menu.Row(btn))
@@ -101,19 +100,6 @@ func accountKeyboard(accs []models.Account) *tele.ReplyMarkup {
 	rows = append(rows, menu.Row(cancelDataBtn(menu)))
 	menu.Inline(rows...)
 	return menu
-}
-
-func accountEmoji(t string) string {
-	switch t {
-	case "cash":
-		return "💵"
-	case "savings":
-		return "🏦"
-	case "credit_card":
-		return "💳"
-	default:
-		return "🏛️"
-	}
 }
 
 // ─── Cancel button (as data, not static Btn) ──────────────

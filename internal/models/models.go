@@ -16,7 +16,7 @@ type Account struct {
 	ID             int64     `json:"id"`
 	UserID         int64     `json:"user_id"`
 	Name           string    `json:"name"`
-	Type           string    `json:"type"` // checking, savings, cash, credit_card
+	Emoji          string    `json:"emoji"`
 	Currency       string    `json:"currency"`
 	InitialBalance float64   `json:"initial_balance"`
 	CreatedAt      time.Time `json:"created_at"`

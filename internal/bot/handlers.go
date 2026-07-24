@@ -134,7 +134,7 @@ func (b *Bot) registerCommands() {
 		{Text: "start", Description: "show main menu"},
 		{Text: "help", Description: "show help"},
 		{Text: "cat", Description: "/cat add 🍞 Name | /cat rm Name | /cat list"},
-		{Text: "acc", Description: "/acc add Name type | /acc list"},
+		{Text: "acc", Description: "/acc add 💳 Name [currency] | /acc list"},
 		{Text: "budget", Description: "/budget set CategoryName amount"},
 	}
 	if err := b.Tele.SetCommands(cmds); err != nil {
@@ -184,14 +184,14 @@ func (b *Bot) handleHelp(c tele.Context) error {
 /cat add 🍞 Name – Create category
 /cat rm Name – Delete category
 /cat list – List categories
-/acc add Name type [currency] – Create account
+/acc add 💳 Name [currency] – Create account
 /acc list – List accounts
 /budget set Name amount – Set monthly budget
 
 *Quick expense:*
 Tap "➕ Expense" → pick category → type amount → pick account → done!
 
-*Types:* checking, savings, cash, credit\_card`, mainMenu())
+*Currency defaults to EUR.*`, mainMenu())
 }
 
 // ─── /cat — manage categories ────────────────────────────
@@ -270,53 +270,48 @@ func (b *Bot) handleAcc(c tele.Context) error {
 	case "list", "ls":
 		return b.handleAccounts(c)
 	default:
-		return c.Send("Usage:\n`/acc add Name type [currency]`\n`/acc list`\n\nTypes: checking, savings, cash, credit_card\nCurrency: UAH, USD, EUR, PLN... (default: UAH)", mainMenu())
+		return c.Send("Usage:\n`/acc add 💳 Name [currency]`\n`/acc list`\n\nCurrency: EUR, USD, UAH, PLN... (default: EUR)", mainMenu())
 	}
 }
 
 func (b *Bot) accAdd(c tele.Context, args []string) error {
 	if len(args) < 1 {
-		return c.Send("Usage: `/acc add Name type [currency]`\nTypes: checking, savings, cash, credit_card\nCurrency: UAH, USD, EUR, PLN, ... (default: UAH)", mainMenu())
+		return c.Send("Usage: `/acc add 💳 Name [currency]`\nCurrency: EUR, USD, UAH, PLN... (default: EUR)", mainMenu())
 	}
 
-	name := args[0]
-	accType := "checking"
-	currency := "UAH"
+	emoji := "💳"
+	name := strings.Join(args, " ")
+	currency := "EUR"
 
-	if len(args) >= 2 {
-		arg := strings.ToUpper(args[1])
-		// If arg looks like a currency code (3 letters), treat as currency
-		if len(arg) == 3 && arg != "CASH" {
-			currency = arg
+	// If first arg looks like a single emoji, extract it
+	if len([]rune(args[0])) <= 4 {
+		emoji = args[0]
+		rest := args[1:]
+		if len(rest) == 0 {
+			return c.Send("Usage: `/acc add 💳 Name [currency]`", mainMenu())
+		}
+		// Check if last arg is a 3-letter currency code
+		if len(rest) >= 2 && len(rest[len(rest)-1]) == 3 {
+			currency = strings.ToUpper(rest[len(rest)-1])
+			name = strings.Join(rest[:len(rest)-1], " ")
 		} else {
-			accType = strings.ToLower(args[1])
-			if len(args) >= 3 {
-				currency = strings.ToUpper(args[2])
-			}
+			name = strings.Join(rest, " ")
+		}
+	} else {
+		// No emoji prefix — last arg might be currency
+		if len(args) >= 2 && len(args[len(args)-1]) == 3 {
+			currency = strings.ToUpper(args[len(args)-1])
+			name = strings.Join(args[:len(args)-1], " ")
 		}
 	}
 
-	valid := map[string]bool{"checking": true, "savings": true, "cash": true, "credit_card": true}
-	if !valid[accType] {
-		return c.Send("Invalid type. Use: checking, savings, cash, credit_card", mainMenu())
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
-	acc, err := b.DB.CreateAccount(ctx, c.Sender().ID, name, accType, currency, 0)
+	acc, err := b.DB.CreateAccount(ctx, c.Sender().ID, name, emoji, currency, 0)
 	if err != nil {
 		return c.Send("❌ Error creating account. Does it already exist?", mainMenu())
 	}
 
-	emoji := "🏛️"
-	switch accType {
-	case "cash":
-		emoji = "💵"
-	case "savings":
-		emoji = "🏦"
-	case "credit_card":
-		emoji = "💳"
-	}
-	return c.Send(fmt.Sprintf("✅ Created: %s *%s* (%s, %s)", emoji, acc.Name, acc.Type, acc.Currency), mainMenu())
+	return c.Send(fmt.Sprintf("✅ Created: %s *%s* (%s)", emoji, acc.Name, acc.Currency), mainMenu())
 }
 
 // ─── /budget — set budget ─────────────────────────────────
@@ -424,15 +419,15 @@ func (b *Bot) handleAccounts(c tele.Context) error {
 	}
 
 	if len(accs) == 0 {
-		return c.Send("No accounts yet.\n\n`/acc add Name type`\nTypes: checking, savings, cash, credit_card", mainMenu())
+		return c.Send("No accounts yet.\n\n`/acc add 💳 Name [currency]`", mainMenu())
 	}
 
 	var lines []string
 	for _, a := range accs {
-		lines = append(lines, fmt.Sprintf("%s *%s*: %.2f %s", accountEmoji(a.Type), a.Name, a.Balance, a.Currency))
+		lines = append(lines, fmt.Sprintf("%s *%s*: %.2f %s", a.Emoji, a.Name, a.Balance, a.Currency))
 	}
 
-	return c.Send("💰 *Accounts*\n\n"+strings.Join(lines, "\n")+"\n\n_Add:_ `/acc add Name type`", mainMenu())
+	return c.Send("💰 *Accounts*\n\n"+strings.Join(lines, "\n")+"\n\n_Add:_ `/acc add 💳 Name [currency]`", mainMenu())
 }
 
 // ─── Categories (button handler) ──────────────────────────
@@ -581,7 +576,7 @@ func (b *Bot) receiveAmount(c tele.Context, state *userState) error {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 	accs, err := b.DB.GetAccounts(ctx, userID)
 	if err != nil || len(accs) == 0 {
-		return c.Send("No accounts! Create one with `/acc add Name type`", mainMenu())
+		return c.Send("No accounts! Create one with `/acc add 💳 Name`", mainMenu())
 	}
 
 	return c.Send(fmt.Sprintf("💰 *%.2f* — pick an account:", amount), accountKeyboard(accs))
@@ -642,7 +637,7 @@ func (b *Bot) receiveIncomeAmount(c tele.Context, state *userState) error {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 	accs, err := b.DB.GetAccounts(ctx, userID)
 	if err != nil || len(accs) == 0 {
-		return c.Send("No accounts! Create one with `/acc add Name type`", mainMenu())
+		return c.Send("No accounts! Create one with `/acc add 💳 Name`", mainMenu())
 	}
 
 	return c.Send(fmt.Sprintf("💰 +*%.2f* — pick an account:", amount), accountKeyboard(accs))

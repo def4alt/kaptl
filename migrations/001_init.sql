@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     id SERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
     name TEXT NOT NULL,
-    type TEXT NOT NULL CHECK (type IN ('checking', 'savings', 'cash', 'credit_card')),
-    currency TEXT NOT NULL DEFAULT 'UAH',
+    emoji TEXT NOT NULL DEFAULT '💳',
+    currency TEXT NOT NULL DEFAULT 'EUR',
     initial_balance DECIMAL(12,2) NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

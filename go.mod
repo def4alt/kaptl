@@ -2,10 +2,7 @@ module github.com/def4alt/kaptl
 
 go 1.25.0
 
-require (
-	github.com/jackc/pgx/v5 v5.10.0
-	gopkg.in/telebot.v3 v3.3.8
-)
+require github.com/jackc/pgx/v5 v5.10.0
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -13,4 +10,5 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
+	gopkg.in/telebot.v4 v4.0.0-beta.10 // indirect
 )

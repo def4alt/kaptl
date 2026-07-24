@@ -3,37 +3,39 @@
 A Telegram bot for personal finance tracking with YNAB-style envelope budgeting.
 
 ## Features
-- 💰 Multi-account support (checking, savings, cash, credit cards)
-- 🏷️ Flat categories with emoji, user-created
+- 💰 Multi-account (checking, savings, cash, credit cards)
+- 🏷️ Categories with emoji, user-created
 - 🎯 Monthly per-category budgets with remaining tracking
-- 👆 Inline keyboard wizard: pick category → type amount → pick account
+- 👆 Inline keyboard wizard for quick expense/income logging
 - 🔒 Single-user auth (locked to Telegram ID)
-- 🐘 PostgreSQL backend
-- 🐳 Docker image, K8s-ready
+- 🐘 PostgreSQL backend (CNPG on k3s)
 
-## Quick Start
-
-1. Set up a PostgreSQL database and run `migrations/001_init.sql`
-2. Create `.env` with:
-   ```
-   TELEGRAM_BOT_TOKEN=your_bot_token
-   ALLOWED_TELEGRAM_ID=your_telegram_id
-   DATABASE_URL=postgres://user:pass@host:5432/ynab?sslmode=disable
-   ```
-3. `go run ./cmd/bot`
-
-## Bot Commands
+## Slash Commands
 
 | Command | Description |
 |---------|-------------|
-| `/start` | Main menu |
-| `➕ Expense` | Log an expense (wizard) |
-| `💵 Income` | Log income |
-| `📊 Summary` | Monthly budget overview |
-| `🎯 Budgets` | Set monthly budget per category |
-| `💰 Accounts` | View accounts with balances |
-| `🏷️ Categories` | Manage categories |
-| `📋 Recent` | Last 10 transactions |
-| `+cat 🍞 Name` | Create category |
-| `-cat Name` | Delete category |
-| `+account Name type` | Create account |
+| `/start` | Show main menu |
+| `/help` | Show all commands |
+| `/cat add 🍞 Name` | Create a category |
+| `/cat rm Name` | Delete a category |
+| `/cat list` | List all categories |
+| `/acc add Name type` | Create an account (types: checking, savings, cash, credit_card) |
+| `/acc list` | List all accounts |
+| `/budget set Name 5000` | Set monthly budget for a category |
+
+## Button Actions
+
+| Button | Description |
+|--------|-------------|
+| ➕ Expense | 3-tap wizard: category → amount → account |
+| 💵 Income | 2-tap wizard: amount → account |
+| 📊 Summary | Current month budget vs spending |
+| 🎯 Budgets | View/set monthly budgets |
+| 💰 Accounts | View accounts with balances |
+| 🏷️ Categories | View categories |
+| 📋 Recent | Last 10 transactions |
+
+## Quick Start
+
+1. `cp .env.example .env` and fill in your values
+2. `go run ./cmd/bot`

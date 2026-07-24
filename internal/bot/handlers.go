@@ -11,7 +11,7 @@ import (
 
 	"github.com/def4alt/kaptl/internal/db"
 	"github.com/def4alt/kaptl/internal/models"
-	tele "gopkg.in/telebot.v3"
+	tele "gopkg.in/telebot.v4"
 )
 
 // ─── Wizard state (conversation-like step tracking) ──────
@@ -83,6 +83,7 @@ func New(database *db.DB) (*Bot, error) {
 	})
 
 	b.registerHandlers()
+	b.registerCommands()
 	return b, nil
 }
 
@@ -91,48 +92,222 @@ func (b *Bot) Start() {
 	b.Tele.Start()
 }
 
+// ─── Register bot commands for Telegram autocomplete ─────
+
+func (b *Bot) registerCommands() {
+	cmds := []tele.Command{
+		{Text: "start", Description: "show main menu"},
+		{Text: "help", Description: "show help"},
+		{Text: "cat", Description: "/cat add 🍞 Name | /cat rm Name | /cat list"},
+		{Text: "acc", Description: "/acc add Name type | /acc list"},
+		{Text: "budget", Description: "/budget set CategoryName amount"},
+	}
+	if err := b.Tele.SetCommands(cmds); err != nil {
+		log.Printf("register commands: %v", err)
+	}
+}
+
 // ─── Handlers ─────────────────────────────────────────────
 
 func (b *Bot) registerHandlers() {
+	// Core commands
 	b.Tele.Handle("/start", b.handleStart)
 	b.Tele.Handle("/menu", b.handleStart)
 	b.Tele.Handle("/help", b.handleHelp)
 
-	// Callback buttons
+	// Slash commands for config
+	b.Tele.Handle("/cat", b.handleCat)
+	b.Tele.Handle("/acc", b.handleAcc)
+	b.Tele.Handle("/budget", b.handleBudget)
+
+	// Callback buttons (inline keyboard)
 	b.Tele.Handle(&btnAddExpense, b.handleAddExpense)
 	b.Tele.Handle(&btnAddIncome, b.handleAddIncome)
 	b.Tele.Handle(&btnSummary, b.handleSummary)
 	b.Tele.Handle(&btnAccounts, b.handleAccounts)
 	b.Tele.Handle(&btnCategories, b.handleCategories)
-	b.Tele.Handle(&btnBudgets, b.handleBudgets)
+	b.Tele.Handle(&btnBudgets, b.handleBudgetMenu)
 	b.Tele.Handle(&btnRecent, b.handleRecent)
 	b.Tele.Handle(&btnCancel, b.handleCancel)
 
 	// Dynamic callbacks (category/account/budget picks)
 	b.Tele.Handle(tele.OnCallback, b.handleCallback)
 
-	// Text input (amount, category name, budget amount, etc.)
+	// Text input (amount during wizard, or unrecognized)
 	b.Tele.Handle(tele.OnText, b.handleText)
 }
 
 func (b *Bot) handleStart(c tele.Context) error {
 	userID := c.Sender().ID
-	delete(b.States, userID) // clear any wizard state
-
+	delete(b.States, userID)
 	return c.Send("💰 *YNAB Bot*\n\nTrack your expenses like a pro.", mainMenu())
 }
 
 func (b *Bot) handleHelp(c tele.Context) error {
 	return c.Send(`*Commands:*
 /start – Main menu
-/menu – Main menu
+/cat add 🍞 Name – Create category
+/cat rm Name – Delete category
+/cat list – List categories
+/acc add Name type – Create account
+/acc list – List accounts
+/budget set Name amount – Set monthly budget
 
 *Quick expense:*
 Tap "➕ Expense" → pick category → type amount → pick account → done!
 
-*Budgets:*
-Use "🎯 Budgets" to set monthly limits per category.
-Use "📊 Summary" to see where you stand.`, mainMenu())
+*Types:* checking, savings, cash, credit\_card`, mainMenu())
+}
+
+// ─── /cat — manage categories ────────────────────────────
+
+func (b *Bot) handleCat(c tele.Context) error {
+	args := c.Args()
+	if len(args) == 0 {
+		return b.handleCategories(c)
+	}
+
+	switch args[0] {
+	case "add":
+		return b.catAdd(c, args[1:])
+	case "rm", "remove", "delete":
+		return b.catRemove(c, args[1:])
+	case "list", "ls":
+		return b.handleCategories(c)
+	default:
+		return c.Send("Usage:\n`/cat add 🍞 Name`\n`/cat rm Name`\n`/cat list`", mainMenu())
+	}
+}
+
+func (b *Bot) catAdd(c tele.Context, args []string) error {
+	if len(args) < 1 {
+		return c.Send("Usage: `/cat add 🍞 Name`", mainMenu())
+	}
+
+	emoji := "📌"
+	rest := args
+
+	// If first arg looks like a single emoji, extract it
+	if len(args) >= 2 && len([]rune(args[0])) <= 4 {
+		emoji = args[0]
+		rest = args[1:]
+	}
+	name := strings.Join(rest, " ")
+
+	ctx := context.Background()
+	cat, err := b.DB.CreateCategory(ctx, c.Sender().ID, name, emoji)
+	if err != nil {
+		return c.Send("❌ Category already exists or error occurred.", mainMenu())
+	}
+	return c.Send(fmt.Sprintf("✅ Created: %s *%s*", cat.Emoji, cat.Name), mainMenu())
+}
+
+func (b *Bot) catRemove(c tele.Context, args []string) error {
+	if len(args) < 1 {
+		return c.Send("Usage: `/cat rm Name`", mainMenu())
+	}
+	name := strings.Join(args, " ")
+
+	ctx := context.Background()
+	cats, _ := b.DB.GetCategories(ctx, c.Sender().ID)
+	for _, cat := range cats {
+		if strings.EqualFold(cat.Name, name) {
+			if err := b.DB.DeleteCategory(ctx, cat.ID); err != nil {
+				return c.Send("❌ Error deleting category.", mainMenu())
+			}
+			return c.Send(fmt.Sprintf("✅ Deleted: %s %s", cat.Emoji, cat.Name), mainMenu())
+		}
+	}
+	return c.Send(fmt.Sprintf("Category *%s* not found.", name), mainMenu())
+}
+
+// ─── /acc — manage accounts ───────────────────────────────
+
+func (b *Bot) handleAcc(c tele.Context) error {
+	args := c.Args()
+	if len(args) == 0 {
+		return b.handleAccounts(c)
+	}
+
+	switch args[0] {
+	case "add":
+		return b.accAdd(c, args[1:])
+	case "list", "ls":
+		return b.handleAccounts(c)
+	default:
+		return c.Send("Usage:\n`/acc add Name type`\n`/acc list`\n\nTypes: checking, savings, cash, credit_card", mainMenu())
+	}
+}
+
+func (b *Bot) accAdd(c tele.Context, args []string) error {
+	if len(args) < 1 {
+		return c.Send("Usage: `/acc add Name type`\nTypes: checking, savings, cash, credit_card", mainMenu())
+	}
+
+	name := args[0]
+	accType := "checking"
+	if len(args) >= 2 {
+		accType = strings.ToLower(args[1])
+	}
+
+	valid := map[string]bool{"checking": true, "savings": true, "cash": true, "credit_card": true}
+	if !valid[accType] {
+		return c.Send("Invalid type. Use: checking, savings, cash, credit_card", mainMenu())
+	}
+
+	ctx := context.Background()
+	acc, err := b.DB.CreateAccount(ctx, c.Sender().ID, name, accType, "UAH", 0)
+	if err != nil {
+		return c.Send("❌ Error creating account. Does it already exist?", mainMenu())
+	}
+
+	emoji := "🏛️"
+	switch accType {
+	case "cash":
+		emoji = "💵"
+	case "savings":
+		emoji = "🏦"
+	case "credit_card":
+		emoji = "💳"
+	}
+	return c.Send(fmt.Sprintf("✅ Created: %s *%s* (%s)", emoji, acc.Name, acc.Type), mainMenu())
+}
+
+// ─── /budget — set budget ─────────────────────────────────
+
+func (b *Bot) handleBudget(c tele.Context) error {
+	args := c.Args()
+	if len(args) < 2 || args[0] != "set" {
+		b.handleBudgetMenu(c)
+		return nil
+	}
+
+	// /budget set Groceries 5000
+	// Last arg is amount, everything before is category name
+	if len(args) < 3 {
+		return c.Send("Usage: `/budget set CategoryName amount`\nExample: `/budget set Groceries 5000`", mainMenu())
+	}
+
+	amount, err := strconv.ParseFloat(args[len(args)-1], 64)
+	if err != nil || amount < 0 {
+		return c.Send("Amount must be a number, e.g. `5000`", mainMenu())
+	}
+
+	catName := strings.Join(args[1:len(args)-1], " ")
+
+	ctx := context.Background()
+	cats, _ := b.DB.GetCategories(ctx, c.Sender().ID)
+	for _, cat := range cats {
+		if strings.EqualFold(cat.Name, catName) {
+			month := time.Now().Format("2006-01") + "-01"
+			_, err := b.DB.SetBudget(ctx, c.Sender().ID, cat.ID, month, amount)
+			if err != nil {
+				return c.Send("❌ Error setting budget.", mainMenu())
+			}
+			return c.Send(fmt.Sprintf("✅ Budget for %s *%s*: *%.0f*/month", cat.Emoji, cat.Name, amount), mainMenu())
+		}
+	}
+	return c.Send(fmt.Sprintf("Category *%s* not found.", catName), mainMenu())
 }
 
 // ─── Add Expense ──────────────────────────────────────────
@@ -143,7 +318,7 @@ func (b *Bot) handleAddExpense(c tele.Context) error {
 
 	cats, err := b.DB.GetCategories(ctx, userID)
 	if err != nil || len(cats) == 0 {
-		return c.Send("No categories yet! Use *🏷️ Categories* to create some first.", mainMenu())
+		return c.Send("No categories yet! Use `/cat add 🍞 Name` to create one.", mainMenu())
 	}
 
 	return c.Send("*Pick a category:*", categoryKeyboard(cats, ""))
@@ -170,7 +345,7 @@ func (b *Bot) handleSummary(c tele.Context) error {
 	}
 
 	if len(cats) == 0 {
-		return c.Send("No categories yet. Use *🏷️ Categories* to create some.", mainMenu())
+		return c.Send("No categories yet. Use `/cat add 🍞 Name` to create some.", mainMenu())
 	}
 
 	totalBudget := 0.0
@@ -203,7 +378,7 @@ func (b *Bot) handleAccounts(c tele.Context) error {
 	}
 
 	if len(accs) == 0 {
-		return c.Send("No accounts yet. Reply with:\n`+account Name type`\n\nTypes: `checking`, `savings`, `cash`, `credit_card`\n\nExample: `+account Monobank checking`", mainMenu())
+		return c.Send("No accounts yet.\n\n`/acc add Name type`\nTypes: checking, savings, cash, credit_card", mainMenu())
 	}
 
 	var lines []string
@@ -222,10 +397,10 @@ func (b *Bot) handleAccounts(c tele.Context) error {
 		lines = append(lines, fmt.Sprintf("%s *%s*: %.2f %s", emoji, a.Name, a.Balance, a.Currency))
 	}
 
-	return c.Send("💰 *Accounts*\n\n"+strings.Join(lines, "\n")+"\n\n_Add account:_ `+account Name type`", mainMenu())
+	return c.Send("💰 *Accounts*\n\n"+strings.Join(lines, "\n")+"\n\n_Add:_ `/acc add Name type`", mainMenu())
 }
 
-// ─── Categories ───────────────────────────────────────────
+// ─── Categories (button handler) ──────────────────────────
 
 func (b *Bot) handleCategories(c tele.Context) error {
 	userID := c.Sender().ID
@@ -237,7 +412,7 @@ func (b *Bot) handleCategories(c tele.Context) error {
 	}
 
 	if len(cats) == 0 {
-		return c.Send("No categories yet.\n\n_Add one:_ `+cat 🍞 Groceries`", mainMenu())
+		return c.Send("No categories yet.\n\n_Add:_ `/cat add 🍞 Name`", mainMenu())
 	}
 
 	var lines []string
@@ -245,21 +420,21 @@ func (b *Bot) handleCategories(c tele.Context) error {
 		lines = append(lines, fmt.Sprintf("%s %s", cat.Emoji, cat.Name))
 	}
 
-	return c.Send("🏷️ *Categories*\n\n"+strings.Join(lines, "\n")+"\n\n_Add:_ `+cat 🍞 Groceries`\n_Delete:_ `-cat Groceries`", mainMenu())
+	return c.Send("🏷️ *Categories*\n\n"+strings.Join(lines, "\n")+
+		"\n\n_Add:_ `/cat add 🍞 Name`\n_Remove:_ `/cat rm Name`", mainMenu())
 }
 
-// ─── Budgets ──────────────────────────────────────────────
+// ─── Budgets (button handler → shows picker) ──────────────
 
-func (b *Bot) handleBudgets(c tele.Context) error {
+func (b *Bot) handleBudgetMenu(c tele.Context) error {
 	userID := c.Sender().ID
 	ctx := context.Background()
 
 	cats, err := b.DB.GetCategories(ctx, userID)
 	if err != nil || len(cats) == 0 {
-		return c.Send("No categories yet. Create some first with *🏷️ Categories*.", mainMenu())
+		return c.Send("No categories yet. Create some first with `/cat add`.", mainMenu())
 	}
 
-	// Show current budgets + ability to set
 	budgets, _ := b.DB.GetBudgets(ctx, userID)
 	month := time.Now().Format("2006-01")
 
@@ -283,7 +458,7 @@ func (b *Bot) handleBudgets(c tele.Context) error {
 	}
 
 	msg := "🎯 *Monthly Budgets*\n\n" + strings.Join(lines, "\n")
-	msg += "\n\n_Tap a category to set its budget:_"
+	msg += "\n\n_Tap a category to set its budget, or use_\n`/budget set Name amount`"
 
 	return c.Send(msg, budgetCategoryKeyboard(cats))
 }
@@ -330,21 +505,10 @@ func (b *Bot) handleCancel(c tele.Context) error {
 	return c.Send("❌ Cancelled.", mainMenu())
 }
 
-// ─── Text handler (amount input, commands, etc.) ────────
+// ─── Text handler (amount input during wizard only) ──────
 
 func (b *Bot) handleText(c tele.Context) error {
 	userID := c.Sender().ID
-	text := c.Text()
-
-	// Global commands (work during wizard too)
-	switch {
-	case strings.HasPrefix(text, "+account"):
-		return b.createAccount(c)
-	case strings.HasPrefix(text, "+cat"):
-		return b.createCategory(c)
-	case strings.HasPrefix(text, "-cat"):
-		return b.deleteCategory(c)
-	}
 
 	state, inWizard := b.States[userID]
 	if !inWizard {
@@ -382,7 +546,7 @@ func (b *Bot) receiveAmount(c tele.Context, state *userState) error {
 	ctx := context.Background()
 	accs, err := b.DB.GetAccounts(ctx, userID)
 	if err != nil || len(accs) == 0 {
-		return c.Send("No accounts! Create one with:\n`+account Name type`", mainMenu())
+		return c.Send("No accounts! Create one with `/acc add Name type`", mainMenu())
 	}
 
 	return c.Send(fmt.Sprintf("💰 *%.2f* — pick an account:", amount), accountKeyboard(accs))
@@ -404,10 +568,9 @@ func (b *Bot) receiveAccount(c tele.Context, state *userState) error {
 		}
 	}
 	if acc == nil {
-		return c.Send(fmt.Sprintf("Account *%s* not found. Pick from the list or create one with `+account`.", accountName), mainMenu())
+		return c.Send(fmt.Sprintf("Account *%s* not found. Use `/acc add` to create one.", accountName), mainMenu())
 	}
 
-	// Create transaction
 	tx, err := b.DB.CreateTransaction(ctx, userID, acc.ID, &state.CategoryID, "expense", state.Amount, nil, state.Description)
 	if err != nil {
 		return c.Send("❌ Error saving transaction. Try again.", mainMenu())
@@ -444,7 +607,7 @@ func (b *Bot) receiveIncomeAmount(c tele.Context, state *userState) error {
 	ctx := context.Background()
 	accs, err := b.DB.GetAccounts(ctx, userID)
 	if err != nil || len(accs) == 0 {
-		return c.Send("No accounts! Create one with:\n`+account Name type`", mainMenu())
+		return c.Send("No accounts! Create one with `/acc add Name type`", mainMenu())
 	}
 
 	return c.Send(fmt.Sprintf("💰 +*%.2f* — pick an account:", amount), accountKeyboard(accs))
@@ -498,7 +661,6 @@ func (b *Bot) receiveBudgetAmount(c tele.Context, state *userState) error {
 
 	delete(b.States, c.Sender().ID)
 
-	// Get category name for confirmation
 	cats, _ := b.DB.GetCategories(ctx, c.Sender().ID)
 	catName := "category"
 	for _, cat := range cats {
@@ -511,102 +673,7 @@ func (b *Bot) receiveBudgetAmount(c tele.Context, state *userState) error {
 	return c.Send(fmt.Sprintf("✅ Budget for *%s*: *%.0f* this month", catName, amount), mainMenu())
 }
 
-// ─── createAccount helper ─────────────────────────────────
-
-func (b *Bot) createAccount(c tele.Context) error {
-	parts := strings.Fields(c.Text())
-	// +account Name type
-	if len(parts) < 2 {
-		return c.Send("Usage: `+account Name type`\nTypes: checking, savings, cash, credit_card", mainMenu())
-	}
-
-	name := parts[1]
-	accType := "checking"
-	if len(parts) >= 3 {
-		accType = strings.ToLower(parts[2])
-	}
-
-	validTypes := map[string]bool{"checking": true, "savings": true, "cash": true, "credit_card": true}
-	if !validTypes[accType] {
-		return c.Send("Invalid type. Use: checking, savings, cash, credit_card", mainMenu())
-	}
-
-	ctx := context.Background()
-	acc, err := b.DB.CreateAccount(ctx, c.Sender().ID, name, accType, "UAH", 0)
-	if err != nil {
-		return c.Send("❌ Error creating account. Does it already exist?", mainMenu())
-	}
-
-	emoji := "💳"
-	if accType == "cash" {
-		emoji = "💵"
-	}
-	return c.Send(fmt.Sprintf("✅ Account *%s* (%s) created! %s", acc.Name, acc.Type, emoji), mainMenu())
-}
-
-// ─── createCategory helper ────────────────────────────────
-
-func (b *Bot) createCategory(c tele.Context) error {
-	// +cat 🍞 Groceries
-	text := strings.TrimPrefix(c.Text(), "+cat")
-	text = strings.TrimSpace(text)
-
-	parts := strings.Fields(text)
-	if len(parts) < 1 {
-		return c.Send("Usage: `+cat 🍞 Groceries`", mainMenu())
-	}
-
-	emoji := "📌"
-	name := text
-
-	// If first "word" looks like an emoji, extract it
-	if len(parts) >= 2 {
-		first := parts[0]
-		if len([]rune(first)) <= 4 {
-			emoji = first
-			name = strings.Join(parts[1:], " ")
-		}
-	}
-
-	ctx := context.Background()
-	cat, err := b.DB.CreateCategory(ctx, c.Sender().ID, name, emoji)
-	if err != nil {
-		return c.Send("❌ Error creating category. Does it already exist?", mainMenu())
-	}
-
-	return c.Send(fmt.Sprintf("✅ Category %s *%s* created!", cat.Emoji, cat.Name), mainMenu())
-}
-
-// ─── deleteCategory helper ────────────────────────────────
-
-func (b *Bot) deleteCategory(c tele.Context) error {
-	name := strings.TrimPrefix(c.Text(), "-cat")
-	name = strings.TrimSpace(name)
-
-	if name == "" {
-		return c.Send("Usage: `-cat Groceries`", mainMenu())
-	}
-
-	ctx := context.Background()
-	cats, err := b.DB.GetCategories(ctx, c.Sender().ID)
-	if err != nil {
-		return c.Send("❌ Error loading categories", mainMenu())
-	}
-
-	for _, cat := range cats {
-		if strings.EqualFold(cat.Name, name) {
-			if err := b.DB.DeleteCategory(ctx, cat.ID); err != nil {
-				return c.Send("❌ Error deleting category", mainMenu())
-			}
-			return c.Send(fmt.Sprintf("✅ Deleted: %s %s", cat.Emoji, cat.Name), mainMenu())
-		}
-	}
-
-	return c.Send(fmt.Sprintf("Category *%s* not found.", name), mainMenu())
-}
-
 // ─── Dynamic Callback Handler ─────────────────────────────
-// Parses callback data prefixes: "cat_", "budget_", "acc_"
 
 func (b *Bot) handleCallback(c tele.Context) error {
 	data := c.Callback().Data
@@ -615,7 +682,6 @@ func (b *Bot) handleCallback(c tele.Context) error {
 
 	switch {
 	case strings.HasPrefix(data, "cat_"):
-		// User picked a category for expense
 		idStr := strings.TrimPrefix(data, "cat_")
 		catID, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
@@ -628,7 +694,6 @@ func (b *Bot) handleCallback(c tele.Context) error {
 			TxType:     "expense",
 		}
 
-		// Get category name for confirmation
 		cats, _ := b.DB.GetCategories(ctx, userID)
 		for _, cat := range cats {
 			if cat.ID == catID {
@@ -638,7 +703,6 @@ func (b *Bot) handleCallback(c tele.Context) error {
 		return c.Edit("Enter the amount:", cancelBtn())
 
 	case strings.HasPrefix(data, "budget_"):
-		// User picked a category to set budget for
 		idStr := strings.TrimPrefix(data, "budget_")
 		catID, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
@@ -659,7 +723,6 @@ func (b *Bot) handleCallback(c tele.Context) error {
 		return c.Edit("Enter the monthly budget amount:", cancelBtn())
 
 	case strings.HasPrefix(data, "acc_"):
-		// User picked an account
 		idStr := strings.TrimPrefix(data, "acc_")
 		accID, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {

@@ -657,6 +657,7 @@ func TestBudgetInteractive(t *testing.T) {
 	processUpdate(b, staticCb("budgets"))
 	processUpdate(b, staticCb("budget|1"))
 	processUpdate(b, textUpdate("3000"))
+	processUpdate(b, staticCb("intv|monthly")) // pick interval
 
 	budgets, _ := store.GetBudgets(nil, 303330553)
 	if len(budgets) != 1 || budgets[0].Amount != 3000 {

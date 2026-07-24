@@ -166,22 +166,28 @@ func (b *Bot) registerHandlers() {
 	b.Tele.Handle(&btnAddIncome, b.handleAddIncome)
 	b.Tele.Handle(&btnMove, b.handleMoveBtn)
 	b.Tele.Handle(&btnSummary, b.handleSummary)
-	b.Tele.Handle(&btnAccounts, b.handleAccounts)
-	b.Tele.Handle(&btnCategories, b.handleCategories)
-	b.Tele.Handle(&btnBudgets, b.handleBudgetMenu)
 	b.Tele.Handle(&btnRecent, b.handleRecent)
 	b.Tele.Handle(&btnCancel, b.handleCancel)
+	b.Tele.Handle(&btnManage, b.handleManageMenu)
+	b.Tele.Handle(&btnMgCats, b.handleManageCats)
+	b.Tele.Handle(&btnMgAccs, b.handleManageAccs)
+	b.Tele.Handle(&btnMgBuds, b.handleManageBuds)
+	b.Tele.Handle(&btnMgGrps, b.handleManageGrps)
+	b.Tele.Handle(&btnBackMn, b.handleStart)
 
 	// Group commands
 	b.Tele.Handle("/group", b.handleGroup)
 
-	// Dynamic callbacks (category/account/budget picks)
-	// Registered with \f prefix — telebot routes menu.Data() callbacks
-	// through static handler matching by Unique field.
+	// Dynamic callbacks
 	b.Tele.Handle("\f"+cbCat, b.handleCatPick)
 	b.Tele.Handle("\f"+cbBudget, b.handleBudgetPick)
 	b.Tele.Handle("\f"+cbAcc, b.handleAccPick)
 	b.Tele.Handle("\f"+cbCancel, b.handleDynamicCancel)
+	b.Tele.Handle("\f"+cbBack, b.handleBackBtn)
+	b.Tele.Handle("\f"+cbEmoji, b.handleEmojiPick)
+	b.Tele.Handle("\f"+cbCurr, b.handleCurrencyPick)
+	b.Tele.Handle("\f"+cbIntv, b.handleIntervalPick)
+	b.Tele.Handle("\f"+cbGroup, b.handleGroupPick)
 
 	// Text input (amount during wizard, or unrecognized)
 	b.Tele.Handle(tele.OnText, b.handleText)
@@ -805,6 +811,12 @@ func (b *Bot) handleText(c tele.Context) error {
 		return b.receiveBudgetAmount(c, state)
 	case "awaiting_move_amount":
 		return b.receiveMoveAmount(c, state)
+	case "awaiting_cat_name":
+		return b.receiveCatName(c, state)
+	case "awaiting_acc_name":
+		return b.receiveAccName(c, state)
+	case "awaiting_group_name":
+		return b.receiveGroupName(c, state)
 	}
 
 	return nil
@@ -994,27 +1006,18 @@ func (b *Bot) receiveBudgetAmount(c tele.Context, state *userState) error {
 		return c.Send("Please enter a valid number, e.g. `5000`", cancelBtn())
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
-	intervalDays, intervalMonths := defaultInterval()
+	state.Amount = amount
+	state.Step = "awaiting_budget_interval"
 
-	_, err = b.Store.SetBudget(ctx, c.Sender().ID, state.EditingBudget, intervalDays, intervalMonths, amount)
-	if err != nil {
-		log.Printf("set budget: %v", err)
-		return c.Send("❌ Error saving budget. Try again.", mainMenu())
-	}
-
-	b.clearState(c.Sender().ID)
-
-	cats, _ := b.Store.GetCategories(ctx, c.Sender().ID)
+	cats, _ := b.Store.GetCategories(nil, c.Sender().ID)
 	catName := "category"
 	for _, cat := range cats {
 		if cat.ID == state.EditingBudget {
-			catName = cat.Name
+			catName = cat.Emoji + " " + cat.Name
 			break
 		}
 	}
-
-	return c.Send(fmt.Sprintf("✅ Budget for *%s*: *%.0f* (monthly)", catName, amount), mainMenu())
+	return c.Send(fmt.Sprintf("🎯 Budget for %s: *%.0f*\n\n_Pick an interval:_", catName, amount), intervalKeyboard())
 }
 
 // ─── Dynamic callback handlers (registered per prefix) ─────
@@ -1079,19 +1082,13 @@ func (b *Bot) handleBudgetPick(c tele.Context) error {
 		EditingBudget: catID,
 	})
 
-	log.Printf("budget pick: category=%d, user=%d", catID, userID)
-
 	cats, _ := b.Store.GetCategories(ctx, userID)
 	for _, cat := range cats {
 		if cat.ID == catID {
-			err := c.Edit(fmt.Sprintf("%s *%s*\n\nEnter the monthly budget amount:", cat.Emoji, cat.Name), cancelBtn())
-			if err != nil {
-				log.Printf("budget pick edit: %v", err)
-			}
-			return err
+			return c.Edit(fmt.Sprintf("%s *%s*\n\n_Type the monthly budget amount:_", cat.Emoji, cat.Name), cancelBtn())
 		}
 	}
-	return c.Edit("Enter the monthly budget amount:", cancelBtn())
+	return c.Edit("Type the budget amount:", cancelBtn())
 }
 
 func (b *Bot) handleAccPick(c tele.Context) error {

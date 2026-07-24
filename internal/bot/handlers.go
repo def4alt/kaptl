@@ -35,11 +35,28 @@ const maxNameLen = 100
 
 // ─── Bot ──────────────────────────────────────────────────
 
+// Bot carries runtime state for the telegram bot.
 type Bot struct {
 	Tele   *tele.Bot
 	DB     *db.DB
 	mu     sync.Mutex
-	States map[int64]*userState // telegramID -> state
+	States map[int64]*userState // telegramID -> wizard state
+	users  map[int64]int64      // telegramID -> internal user ID
+}
+
+// userID resolves a Telegram user ID to the internal database user ID.
+// Returns 0 if the user hasn't been created yet.
+func (b *Bot) userID(telegramID int64) int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.users[telegramID]
+}
+
+// setUserID caches the mapping from Telegram ID to internal DB ID.
+func (b *Bot) setUserID(telegramID, internalID int64) {
+	b.mu.Lock()
+	b.users[telegramID] = internalID
+	b.mu.Unlock()
 }
 
 // stateFor returns the wizard state for a user, safely.
@@ -61,6 +78,12 @@ func (b *Bot) clearState(uid int64) {
 	b.mu.Lock()
 	delete(b.States, uid)
 	b.mu.Unlock()
+}
+
+// dbUserID returns the internal database user ID for the sender of this context.
+// Returns 0 if the user hasn't been resolved (middleware failed).
+func (b *Bot) dbUserID(c tele.Context) int64 {
+	return b.userID(c.Sender().ID)
 }
 
 func New(database *db.DB) (*Bot, error) {
@@ -88,6 +111,7 @@ func New(database *db.DB) (*Bot, error) {
 		Tele:   tb,
 		DB:     database,
 		States: make(map[int64]*userState),
+		users:  make(map[int64]int64),
 	}
 
 	// Auth middleware
@@ -102,14 +126,17 @@ func New(database *db.DB) (*Bot, error) {
 		})
 	}
 
-	// Ensure user exists
+	// Ensure user exists and cache their internal ID
 	tb.Use(func(next tele.HandlerFunc) tele.HandlerFunc {
 		return func(c tele.Context) error {
-			ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
+			ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+			defer cancel()
 			sender := c.Sender()
-			_, err := b.DB.GetOrCreateUser(ctx, sender.ID, sender.Username, sender.FirstName, sender.LanguageCode)
+			u, err := b.DB.GetOrCreateUser(ctx, sender.ID, sender.Username, sender.FirstName, sender.LanguageCode)
 			if err != nil {
 				log.Printf("get or create user: %v", err)
+			} else {
+				b.setUserID(sender.ID, u.ID)
 			}
 			return next(c)
 		}

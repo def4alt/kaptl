@@ -99,11 +99,44 @@ func Accounts(accs []models.Account) string {
 	if len(accs) == 0 {
 		return "No accounts yet.\n\n`/acc add 💳 Name [currency]`"
 	}
-	var lines []string
+
+	const w = 20
+
+	var total float64
+	var b strings.Builder
+	b.WriteString("💰 *Accounts*\n")
+
 	for _, a := range accs {
-		lines = append(lines, fmt.Sprintf("%s *%s*: %.2f %s", a.Emoji, a.Name, a.Balance, a.Currency))
+		total += a.Balance
+		name := fmt.Sprintf("%s %s", a.Emoji, a.Name)
+		amount := formatAmount(a.Balance)
+
+		b.WriteString(fmt.Sprintf("\n┌%s┐\n", strings.Repeat("─", w+2)))
+		sp1 := w - len(name)
+		if sp1 < 0 { sp1 = 0 }
+		b.WriteString(fmt.Sprintf("│ %s%s │\n", name, strings.Repeat(" ", sp1)))
+		sp2 := w - len(amount)
+		if sp2 < 0 { sp2 = 0 }
+		b.WriteString(fmt.Sprintf("│ %s%s │\n", amount, strings.Repeat(" ", sp2)))
+		b.WriteString(fmt.Sprintf("└%s┘", strings.Repeat("─", w+2)))
 	}
-	return "💰 *Accounts*\n\n" + strings.Join(lines, "\n") + "\n\n_Add:_ `/acc add 💳 Name [currency]`"
+
+	b.WriteString(fmt.Sprintf("\n\n         Total: %s", formatAmount(total)))
+	return b.String()
+}
+
+func formatAmount(v float64) string {
+	if v >= 0 {
+		return fmt.Sprintf("€%'.f", v)
+	}
+	return fmt.Sprintf("-€%'.f", -v)
+}
+
+func padRight(s string, n int) string {
+	if len(s) >= n {
+		return s
+	}
+	return s + strings.Repeat(" ", n-len(s))
 }
 
 func Categories(cats []models.Category, groups []models.CategoryGroup) string {

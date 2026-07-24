@@ -821,6 +821,7 @@ func (b *Bot) receiveBudgetAmount(c tele.Context, state *userState) error {
 
 	_, err = b.Store.SetBudget(ctx, c.Sender().ID, state.EditingBudget, month, amount)
 	if err != nil {
+		log.Printf("set budget: %v", err)
 		return c.Send("❌ Error saving budget. Try again.", mainMenu())
 	}
 

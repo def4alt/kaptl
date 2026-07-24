@@ -96,7 +96,10 @@ func (d *DB) CreateCategory(ctx context.Context, userID int64, name, emoji strin
 
 func (d *DB) GetCategories(ctx context.Context, userID int64) ([]models.Category, error) {
 	rows, err := d.Pool.Query(ctx, `
-		SELECT id, user_id, name, emoji, created_at
+		SELECT id, user_id, name, emoji, created_at,
+			   0.0::float8 AS spent,
+			   0.0::float8 AS budget,
+			   0.0::float8 AS remaining
 		FROM categories
 		WHERE user_id = $1
 		ORDER BY name

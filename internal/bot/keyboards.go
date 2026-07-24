@@ -12,8 +12,8 @@ import (
 // ─── Static inline buttons (handled via Handle(&btn, ...)) ──
 
 var (
-	btnAddExpense = tele.Btn{Unique: "add_expense", Text: "➕ Expense"}
-	btnAddIncome  = tele.Btn{Unique: "add_income", Text: "💵 Income"}
+	btnAddExpense = tele.Btn{Unique: "add_expense", Text: "➖ Expense"}
+	btnAddIncome  = tele.Btn{Unique: "add_income", Text: "➕ Income"}
 	btnMove       = tele.Btn{Unique: "move", Text: "🔀 Move"}
 	btnSummary    = tele.Btn{Unique: "summary", Text: "📊 Summary"}
 	btnAccounts   = tele.Btn{Unique: "accounts", Text: "💰 Accounts"}

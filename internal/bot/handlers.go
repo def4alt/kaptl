@@ -184,7 +184,7 @@ func (b *Bot) handleHelp(c tele.Context) error {
 /cat add 🍞 Name – Create category
 /cat rm Name – Delete category
 /cat list – List categories
-/acc add Name type – Create account
+/acc add Name type [currency] – Create account
 /acc list – List accounts
 /budget set Name amount – Set monthly budget
 
@@ -270,19 +270,30 @@ func (b *Bot) handleAcc(c tele.Context) error {
 	case "list", "ls":
 		return b.handleAccounts(c)
 	default:
-		return c.Send("Usage:\n`/acc add Name type`\n`/acc list`\n\nTypes: checking, savings, cash, credit_card", mainMenu())
+		return c.Send("Usage:\n`/acc add Name type [currency]`\n`/acc list`\n\nTypes: checking, savings, cash, credit_card\nCurrency: UAH, USD, EUR, PLN... (default: UAH)", mainMenu())
 	}
 }
 
 func (b *Bot) accAdd(c tele.Context, args []string) error {
 	if len(args) < 1 {
-		return c.Send("Usage: `/acc add Name type`\nTypes: checking, savings, cash, credit_card", mainMenu())
+		return c.Send("Usage: `/acc add Name type [currency]`\nTypes: checking, savings, cash, credit_card\nCurrency: UAH, USD, EUR, PLN, ... (default: UAH)", mainMenu())
 	}
 
 	name := args[0]
 	accType := "checking"
+	currency := "UAH"
+
 	if len(args) >= 2 {
-		accType = strings.ToLower(args[1])
+		arg := strings.ToUpper(args[1])
+		// If arg looks like a currency code (3 letters), treat as currency
+		if len(arg) == 3 && arg != "CASH" {
+			currency = arg
+		} else {
+			accType = strings.ToLower(args[1])
+			if len(args) >= 3 {
+				currency = strings.ToUpper(args[2])
+			}
+		}
 	}
 
 	valid := map[string]bool{"checking": true, "savings": true, "cash": true, "credit_card": true}
@@ -291,7 +302,7 @@ func (b *Bot) accAdd(c tele.Context, args []string) error {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
-	acc, err := b.DB.CreateAccount(ctx, c.Sender().ID, name, accType, "UAH", 0)
+	acc, err := b.DB.CreateAccount(ctx, c.Sender().ID, name, accType, currency, 0)
 	if err != nil {
 		return c.Send("❌ Error creating account. Does it already exist?", mainMenu())
 	}
@@ -305,7 +316,7 @@ func (b *Bot) accAdd(c tele.Context, args []string) error {
 	case "credit_card":
 		emoji = "💳"
 	}
-	return c.Send(fmt.Sprintf("✅ Created: %s *%s* (%s)", emoji, acc.Name, acc.Type), mainMenu())
+	return c.Send(fmt.Sprintf("✅ Created: %s *%s* (%s, %s)", emoji, acc.Name, acc.Type, acc.Currency), mainMenu())
 }
 
 // ─── /budget — set budget ─────────────────────────────────

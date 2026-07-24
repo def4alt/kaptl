@@ -140,23 +140,51 @@ func padRight(s string, n int) string {
 
 func Categories(cats []models.Category, groups []models.CategoryGroup) string {
 	if len(cats) == 0 {
-		return "No categories yet.\n\n_Add:_ `/cat add 🍞 Name`"
+		return "No categories yet.\n\n`/cat add 🍞 Name`"
 	}
+
 	gm := map[int64]models.CategoryGroup{}
 	for _, g := range groups {
 		gm[g.ID] = g
 	}
-	var lines []string
+
+	// Group cats by group ID
+	grouped := map[int64][]models.Category{}
+	var ungrouped []models.Category
+	groupOrder := []int64{} // nil means ungrouped
+
 	for _, c := range cats {
-		gs := ""
 		if c.GroupID != nil {
-			if g, ok := gm[*c.GroupID]; ok {
-				gs = fmt.Sprintf("  _%s %s_", g.Emoji, g.Name)
+			if _, ok := grouped[*c.GroupID]; !ok {
+				groupOrder = append(groupOrder, *c.GroupID)
 			}
+			grouped[*c.GroupID] = append(grouped[*c.GroupID], c)
+		} else {
+			ungrouped = append(ungrouped, c)
 		}
-		lines = append(lines, fmt.Sprintf("%s %s%s", c.Emoji, c.Name, gs))
 	}
-	return "🏷️ *Categories*\n\n" + strings.Join(lines, "\n") + "\n\n`/cat add 🍞 Name`  `/cat rm Name`"
+
+	var b strings.Builder
+	b.WriteString("🏷️ *Categories*\n")
+
+	for _, gid := range groupOrder {
+		g := gm[gid]
+		b.WriteString(fmt.Sprintf("\n%s %s\n", g.Emoji, g.Name))
+		for _, c := range grouped[gid] {
+			b.WriteString(fmt.Sprintf("  %s %s\n", c.Emoji, c.Name))
+		}
+	}
+
+	if len(ungrouped) > 0 {
+		if len(groupOrder) > 0 {
+			b.WriteString("\n📌 Other\n")
+		}
+		for _, c := range ungrouped {
+			b.WriteString(fmt.Sprintf("  %s %s\n", c.Emoji, c.Name))
+		}
+	}
+
+	return b.String()
 }
 
 func Budgets(cats []models.Category, budgets []models.Budget) string {

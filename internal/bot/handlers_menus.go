@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/def4alt/kaptl/internal/bot/view"
 	tele "gopkg.in/telebot.v4"
 )
 
@@ -55,7 +56,7 @@ func (b *Bot) handleSummary(c tele.Context) error {
 		return h.send("No categories yet. Use `/cat add 🍞 Name`.")
 	}
 	rta, _ := h.Bot.Store.GetReadyToAssign(h.DB, h.UID)
-	return h.send(msgSummary(rows, rta))
+	return h.send(view.Summary(rows, rta))
 }
 
 func (b *Bot) handleRecent(c tele.Context) error {

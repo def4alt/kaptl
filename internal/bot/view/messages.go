@@ -33,34 +33,63 @@ Tap "➖ Expense" → pick category → type amount → pick account → done!
 
 // ─── Summary ──────────────────────────────────────────────
 
+const barWidth = 20
+
 func Summary(rows []models.BudgetRow, rta float64) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("📊 *Budget Summary — %s*\n", time.Now().Format("January 2006")))
+	b.WriteString(fmt.Sprintf("📊 *%s*\n", time.Now().Format("January 2006")))
 
 	color := "🟢"
 	if rta < 0 {
 		color = "🔴"
 	}
-	b.WriteString(fmt.Sprintf("\n💵 *Ready to Assign:* %s €%.0f\n", color, rta))
+	b.WriteString(fmt.Sprintf("💵 Ready to Assign: %s €%.0f\n", color, rta))
 
-	totalBudget, totalSpent := 0.0, 0.0
+	totalSpent, totalBudget := 0.0, 0.0
 	lastGroup := ""
+	first := true
 
 	for _, r := range rows {
 		if r.GroupName != "" && r.GroupName != lastGroup {
 			lastGroup = r.GroupName
-			b.WriteString(fmt.Sprintf("\n🏷️ *%s*", lastGroup))
+			if !first {
+				b.WriteString("\n")
+			}
+			first = false
+			b.WriteString(fmt.Sprintf("\n🏠 *%s*\n", lastGroup))
 		}
-		line := fmt.Sprintf("%s *%s*: %.0f / %.0f (%.0f left)", r.Emoji, r.Name, r.Spent, r.Available, r.Remaining)
-		if r.Rollover > 0 {
-			line += fmt.Sprintf("  _+%.0f rollover_", r.Rollover)
+
+		// Progress bar
+		pct := 0.0
+		if r.Available > 0 {
+			pct = r.Spent / r.Available
+			if pct > 1 {
+				pct = 1
+			}
 		}
-		b.WriteString("\n" + line)
-		totalBudget += r.Available
+		filled := int(pct * barWidth)
+		bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+
+		// Left amount
+		left := ""
+		if r.Remaining >= 0 {
+			left = fmt.Sprintf("+€%.0f left", r.Remaining)
+		} else {
+			left = fmt.Sprintf("-€%.0f over", -r.Remaining)
+		}
+		if r.Remaining == 0 {
+			left = "€0 left"
+		}
+
+		b.WriteString(fmt.Sprintf("\n  %s %s\n", r.Emoji, r.Name))
+		b.WriteString(fmt.Sprintf("     %s   %s\n", bar, left))
+		b.WriteString(fmt.Sprintf("     €%.0f / €%.0f", r.Spent, r.Available))
+
 		totalSpent += r.Spent
+		totalBudget += r.Available
 	}
 
-	b.WriteString(fmt.Sprintf("\n\n💵 Total: *%.0f / %.0f* (%.0f left)", totalSpent, totalBudget, totalBudget-totalSpent))
+	b.WriteString(fmt.Sprintf("\n\n────────────────────────────────\n💵 Total: €%.0f / €%.0f", totalSpent, totalBudget))
 	return b.String()
 }
 

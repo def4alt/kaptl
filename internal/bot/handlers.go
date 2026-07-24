@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/def4alt/kaptl/internal/db"
 	"github.com/def4alt/kaptl/internal/models"
 	tele "gopkg.in/telebot.v4"
 )
@@ -38,33 +37,12 @@ const maxNameLen = 100
 // Bot carries runtime state for the telegram bot.
 type Bot struct {
 	Tele   *tele.Bot
-	DB     *db.DB
+	Store  models.Store
 	mu     sync.Mutex
 	States map[int64]*userState // telegramID -> wizard state
 }
 
-// stateFor returns the wizard state for a user, safely.
-func (b *Bot) stateFor(uid int64) *userState {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.States[uid]
-}
-
-// setState stores wizard state for a user.
-func (b *Bot) setState(uid int64, s *userState) {
-	b.mu.Lock()
-	b.States[uid] = s
-	b.mu.Unlock()
-}
-
-// clearState removes wizard state for a user.
-func (b *Bot) clearState(uid int64) {
-	b.mu.Lock()
-	delete(b.States, uid)
-	b.mu.Unlock()
-}
-
-func New(database *db.DB) (*Bot, error) {
+func New(store models.Store) (*Bot, error) {
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if token == "" {
 		return nil, fmt.Errorf("TELEGRAM_BOT_TOKEN not set")
@@ -87,7 +65,7 @@ func New(database *db.DB) (*Bot, error) {
 
 	b := &Bot{
 		Tele:   tb,
-		DB:     database,
+		Store:  store,
 		States: make(map[int64]*userState),
 	}
 
@@ -109,7 +87,7 @@ func New(database *db.DB) (*Bot, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 			defer cancel()
 			sender := c.Sender()
-			_, err := b.DB.GetOrCreateUser(ctx, sender.ID, sender.Username, sender.FirstName, sender.LanguageCode)
+			_, err := b.Store.GetOrCreateUser(ctx, sender.ID, sender.Username, sender.FirstName, sender.LanguageCode)
 			if err != nil {
 				log.Printf("get or create user: %v", err)
 			}
@@ -120,6 +98,27 @@ func New(database *db.DB) (*Bot, error) {
 	b.registerHandlers()
 	b.registerCommands()
 	return b, nil
+}
+
+// stateFor returns the wizard state for a user, safely.
+func (b *Bot) stateFor(uid int64) *userState {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.States[uid]
+}
+
+// setState stores wizard state for a user.
+func (b *Bot) setState(uid int64, s *userState) {
+	b.mu.Lock()
+	b.States[uid] = s
+	b.mu.Unlock()
+}
+
+// clearState removes wizard state for a user.
+func (b *Bot) clearState(uid int64) {
+	b.mu.Lock()
+	delete(b.States, uid)
+	b.mu.Unlock()
 }
 
 func (b *Bot) Start() {
@@ -230,7 +229,7 @@ func (b *Bot) catAdd(c tele.Context, args []string) error {
 	name := strings.Join(rest, " ")
 
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
-	cat, err := b.DB.CreateCategory(ctx, c.Sender().ID, name, emoji)
+	cat, err := b.Store.CreateCategory(ctx, c.Sender().ID, name, emoji)
 	if err != nil {
 		return c.Send("❌ Category already exists or error occurred.", mainMenu())
 	}
@@ -244,10 +243,10 @@ func (b *Bot) catRemove(c tele.Context, args []string) error {
 	name := strings.Join(args, " ")
 
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
-	cats, _ := b.DB.GetCategories(ctx, c.Sender().ID)
+	cats, _ := b.Store.GetCategories(ctx, c.Sender().ID)
 	for _, cat := range cats {
 		if strings.EqualFold(cat.Name, name) {
-			if err := b.DB.DeleteCategory(ctx, cat.ID); err != nil {
+			if err := b.Store.DeleteCategory(ctx, cat.ID); err != nil {
 				return c.Send("❌ Error deleting category.", mainMenu())
 			}
 			return c.Send(fmt.Sprintf("✅ Deleted: %s %s", cat.Emoji, cat.Name), mainMenu())
@@ -284,7 +283,8 @@ func (b *Bot) accAdd(c tele.Context, args []string) error {
 	currency := "EUR"
 
 	// If first arg looks like a single emoji, extract it
-	if len([]rune(args[0])) <= 4 {
+	first := []rune(args[0])
+	if len(first) <= 4 && len(args) >= 2 && first[0] > 127 {
 		emoji = args[0]
 		rest := args[1:]
 		if len(rest) == 0 {
@@ -306,7 +306,7 @@ func (b *Bot) accAdd(c tele.Context, args []string) error {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
-	acc, err := b.DB.CreateAccount(ctx, c.Sender().ID, name, emoji, currency, 0)
+	acc, err := b.Store.CreateAccount(ctx, c.Sender().ID, name, emoji, currency, 0)
 	if err != nil {
 		return c.Send("❌ Error creating account. Does it already exist?", mainMenu())
 	}
@@ -337,11 +337,11 @@ func (b *Bot) handleBudget(c tele.Context) error {
 	catName := strings.Join(args[1:len(args)-1], " ")
 
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
-	cats, _ := b.DB.GetCategories(ctx, c.Sender().ID)
+	cats, _ := b.Store.GetCategories(ctx, c.Sender().ID)
 	for _, cat := range cats {
 		if strings.EqualFold(cat.Name, catName) {
 			month := time.Now().Format("2006-01") + "-01"
-			_, err := b.DB.SetBudget(ctx, c.Sender().ID, cat.ID, month, amount)
+			_, err := b.Store.SetBudget(ctx, c.Sender().ID, cat.ID, month, amount)
 			if err != nil {
 				return c.Send("❌ Error setting budget.", mainMenu())
 			}
@@ -357,7 +357,7 @@ func (b *Bot) handleAddExpense(c tele.Context) error {
 	userID := c.Sender().ID
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
-	cats, err := b.DB.GetCategories(ctx, userID)
+	cats, err := b.Store.GetCategories(ctx, userID)
 	if err != nil || len(cats) == 0 {
 		return c.Send("No categories yet! Use `/cat add 🍞 Name` to create one.", mainMenu())
 	}
@@ -380,7 +380,7 @@ func (b *Bot) handleSummary(c tele.Context) error {
 	userID := c.Sender().ID
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
-	cats, err := b.DB.GetBudgetSummary(ctx, userID)
+	cats, err := b.Store.GetBudgetSummary(ctx, userID)
 	if err != nil {
 		log.Printf("get budget summary: %v", err)
 		return c.Send("Error loading summary", mainMenu())
@@ -414,7 +414,7 @@ func (b *Bot) handleAccounts(c tele.Context) error {
 	userID := c.Sender().ID
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
-	accs, err := b.DB.GetAccounts(ctx, userID)
+	accs, err := b.Store.GetAccounts(ctx, userID)
 	if err != nil {
 		log.Printf("get accounts: %v", err)
 		return c.Send("Error loading accounts", mainMenu())
@@ -438,7 +438,7 @@ func (b *Bot) handleCategories(c tele.Context) error {
 	userID := c.Sender().ID
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
-	cats, err := b.DB.GetCategories(ctx, userID)
+	cats, err := b.Store.GetCategories(ctx, userID)
 	if err != nil {
 		log.Printf("get categories: %v", err)
 		return c.Send("Error loading categories", mainMenu())
@@ -463,12 +463,12 @@ func (b *Bot) handleBudgetMenu(c tele.Context) error {
 	userID := c.Sender().ID
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
-	cats, err := b.DB.GetCategories(ctx, userID)
+	cats, err := b.Store.GetCategories(ctx, userID)
 	if err != nil || len(cats) == 0 {
 		return c.Send("No categories yet. Create some first with `/cat add`.", mainMenu())
 	}
 
-	budgets, _ := b.DB.GetBudgets(ctx, userID)
+	budgets, _ := b.Store.GetBudgets(ctx, userID)
 	month := time.Now().Format("2006-01")
 
 	budgetMap := make(map[int64]float64)
@@ -502,7 +502,7 @@ func (b *Bot) handleRecent(c tele.Context) error {
 	userID := c.Sender().ID
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
-	txs, err := b.DB.GetRecentTransactions(ctx, userID, 10)
+	txs, err := b.Store.GetRecentTransactions(ctx, userID, 10)
 	if err != nil {
 		log.Printf("get recent transactions: %v", err)
 		return c.Send("Error loading transactions", mainMenu())
@@ -578,7 +578,7 @@ func (b *Bot) receiveAmount(c tele.Context, state *userState) error {
 
 	userID := c.Sender().ID
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
-	accs, err := b.DB.GetAccounts(ctx, userID)
+	accs, err := b.Store.GetAccounts(ctx, userID)
 	if err != nil || len(accs) == 0 {
 		return c.Send("No accounts! Create one with `/acc add 💳 Name`", mainMenu())
 	}
@@ -593,7 +593,7 @@ func (b *Bot) receiveAccount(c tele.Context, state *userState) error {
 	userID := c.Sender().ID
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
-	accs, _ := b.DB.GetAccounts(ctx, userID)
+	accs, _ := b.Store.GetAccounts(ctx, userID)
 	var acc *models.Account
 	for _, a := range accs {
 		if strings.EqualFold(a.Name, accountName) {
@@ -605,7 +605,7 @@ func (b *Bot) receiveAccount(c tele.Context, state *userState) error {
 		return c.Send(fmt.Sprintf("Account *%s* not found. Use `/acc add` to create one.", accountName), mainMenu())
 	}
 
-	tx, err := b.DB.CreateTransaction(ctx, userID, acc.ID, &state.CategoryID, "expense", state.Amount, nil, state.Description)
+	tx, err := b.Store.CreateTransaction(ctx, userID, acc.ID, &state.CategoryID, "expense", state.Amount, nil, state.Description)
 	if err != nil {
 		return c.Send("❌ Error saving transaction. Try again.", mainMenu())
 	}
@@ -613,7 +613,7 @@ func (b *Bot) receiveAccount(c tele.Context, state *userState) error {
 	b.clearState(userID)
 
 	catName := ""
-	cats, _ := b.DB.GetCategories(ctx, userID)
+	cats, _ := b.Store.GetCategories(ctx, userID)
 	for _, c := range cats {
 		if c.ID == state.CategoryID {
 			catName = c.Name
@@ -639,7 +639,7 @@ func (b *Bot) receiveIncomeAmount(c tele.Context, state *userState) error {
 
 	userID := c.Sender().ID
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
-	accs, err := b.DB.GetAccounts(ctx, userID)
+	accs, err := b.Store.GetAccounts(ctx, userID)
 	if err != nil || len(accs) == 0 {
 		return c.Send("No accounts! Create one with `/acc add 💳 Name`", mainMenu())
 	}
@@ -654,7 +654,7 @@ func (b *Bot) receiveIncomeAccount(c tele.Context, state *userState) error {
 	userID := c.Sender().ID
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
-	accs, _ := b.DB.GetAccounts(ctx, userID)
+	accs, _ := b.Store.GetAccounts(ctx, userID)
 	var acc *models.Account
 	for _, a := range accs {
 		if strings.EqualFold(a.Name, accountName) {
@@ -666,7 +666,7 @@ func (b *Bot) receiveIncomeAccount(c tele.Context, state *userState) error {
 		return c.Send("Account not found.", mainMenu())
 	}
 
-	tx, err := b.DB.CreateTransaction(ctx, userID, acc.ID, nil, "income", state.Amount, nil, "")
+	tx, err := b.Store.CreateTransaction(ctx, userID, acc.ID, nil, "income", state.Amount, nil, "")
 	if err != nil {
 		return c.Send("❌ Error saving income. Try again.", mainMenu())
 	}
@@ -688,14 +688,14 @@ func (b *Bot) receiveBudgetAmount(c tele.Context, state *userState) error {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 	month := time.Now().Format("2006-01") + "-01"
 
-	_, err = b.DB.SetBudget(ctx, c.Sender().ID, state.EditingBudget, month, amount)
+	_, err = b.Store.SetBudget(ctx, c.Sender().ID, state.EditingBudget, month, amount)
 	if err != nil {
 		return c.Send("❌ Error saving budget. Try again.", mainMenu())
 	}
 
 	b.clearState(c.Sender().ID)
 
-	cats, _ := b.DB.GetCategories(ctx, c.Sender().ID)
+	cats, _ := b.Store.GetCategories(ctx, c.Sender().ID)
 	catName := "category"
 	for _, cat := range cats {
 		if cat.ID == state.EditingBudget {
@@ -739,7 +739,7 @@ func (b *Bot) handleCallback(c tele.Context) error {
 			TxType:     "expense",
 		})
 
-		cats, _ := b.DB.GetCategories(ctx, userID)
+		cats, _ := b.Store.GetCategories(ctx, userID)
 		for _, cat := range cats {
 			if cat.ID == catID {
 				return c.Edit(fmt.Sprintf("%s *%s*\n\nEnter the amount:", cat.Emoji, cat.Name), cancelBtn())
@@ -758,7 +758,7 @@ func (b *Bot) handleCallback(c tele.Context) error {
 			EditingBudget: catID,
 		})
 
-		cats, _ := b.DB.GetCategories(ctx, userID)
+		cats, _ := b.Store.GetCategories(ctx, userID)
 		for _, cat := range cats {
 			if cat.ID == catID {
 				return c.Edit(fmt.Sprintf("%s *%s*\n\nEnter the monthly budget amount:", cat.Emoji, cat.Name), cancelBtn())
@@ -777,21 +777,21 @@ func (b *Bot) handleCallback(c tele.Context) error {
 			return c.Respond(&tele.CallbackResponse{Text: "No active operation"})
 		}
 
-		acc, err := b.DB.GetAccount(ctx, accID)
+		acc, err := b.Store.GetAccount(ctx, accID)
 		if err != nil {
 			return c.Respond(&tele.CallbackResponse{Text: "Account not found"})
 		}
 
 		switch state.TxType {
 		case "expense":
-			tx, err := b.DB.CreateTransaction(ctx, userID, acc.ID, &state.CategoryID, "expense", state.Amount, nil, state.Description)
+			tx, err := b.Store.CreateTransaction(ctx, userID, acc.ID, &state.CategoryID, "expense", state.Amount, nil, state.Description)
 			if err != nil {
 				return c.Edit("❌ Error saving transaction. Try again.", mainMenu())
 			}
 			b.clearState(userID)
 
 			catName := ""
-			cats, _ := b.DB.GetCategories(ctx, userID)
+			cats, _ := b.Store.GetCategories(ctx, userID)
 			for _, c := range cats {
 				if c.ID == state.CategoryID {
 					catName = c.Name
@@ -803,7 +803,7 @@ func (b *Bot) handleCallback(c tele.Context) error {
 				tx.Amount, acc.Name, catName, tx.CreatedAt.Format("Jan 2 15:04")), mainMenu())
 
 		case "income":
-			tx, err := b.DB.CreateTransaction(ctx, userID, acc.ID, nil, "income", state.Amount, nil, "")
+			tx, err := b.Store.CreateTransaction(ctx, userID, acc.ID, nil, "income", state.Amount, nil, "")
 			if err != nil {
 				return c.Edit("❌ Error saving income. Try again.", mainMenu())
 			}

@@ -34,7 +34,7 @@ Tap "➖ Expense" → pick category → type amount → pick account → done!
 // ─── Summary ──────────────────────────────────────────────
 
 const barWidth = 14
-const cardWidth = 16
+const cardWidth = 14
 
 func Summary(rows []models.BudgetRow, rta float64) string {
 	var b strings.Builder

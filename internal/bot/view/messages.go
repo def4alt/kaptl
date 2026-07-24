@@ -188,20 +188,36 @@ func Categories(cats []models.Category, groups []models.CategoryGroup) string {
 }
 
 func Budgets(cats []models.Category, budgets []models.Budget) string {
+	if len(budgets) == 0 {
+		return "No budgets set yet.\n\nTap a category or use\n`/budget set Name amount`"
+	}
+
 	bm := map[int64]models.Budget{}
 	for _, bd := range budgets {
 		bm[bd.CategoryID] = bd
 	}
-	var lines []string
+
+	const w = 20
+	var b strings.Builder
+	b.WriteString("🎯 *Budgets*\n")
+
 	for _, c := range cats {
-		if bd, ok := bm[c.ID]; ok {
-			lines = append(lines, fmt.Sprintf("%s %s: *%.0f* (%s)", c.Emoji, c.Name, bd.Amount, bd.Description()))
+		bd, ok := bm[c.ID]
+		if !ok {
+			continue
 		}
+		amount := formatAmount(bd.Amount)
+		interval := bd.Description()
+		reset := bd.PeriodStart.AddDate(0, bd.IntervalMonths, bd.IntervalDays).Format("Jan 2")
+
+		b.WriteString(fmt.Sprintf("\n┌%s┐\n", strings.Repeat("─", w+2)))
+		b.WriteString(fmt.Sprintf("│ %s %s%s │\n", c.Emoji, c.Name, strings.Repeat(" ", w-len(c.Emoji)-len(c.Name)-2)))
+		b.WriteString(fmt.Sprintf("│   %s %s%s │\n", amount, interval, strings.Repeat(" ", w-len(amount)-len(interval)-4)))
+		b.WriteString(fmt.Sprintf("│   Resets: %s%s │\n", reset, strings.Repeat(" ", w-len(reset)-11)))
+		b.WriteString(fmt.Sprintf("└%s┘", strings.Repeat("─", w+2)))
 	}
-	if len(lines) == 0 {
-		lines = append(lines, "_No budgets set_")
-	}
-	return "🎯 *Budget*\n\n" + strings.Join(lines, "\n") + "\n\n_Tap a category to set budget, or_\n`/budget set Name amount`"
+
+	return b.String()
 }
 
 func Groups(groups []models.CategoryGroup) string {

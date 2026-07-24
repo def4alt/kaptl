@@ -125,10 +125,20 @@ func Accounts(accs []models.Account) string {
 }
 
 func formatAmount(v float64) string {
-	if v >= 0 {
-		return fmt.Sprintf("€%'.f", v)
+	neg := v < 0
+	if neg { v = -v }
+	intPart := fmt.Sprintf("%.0f", v)
+	var result []byte
+	for i, c := range intPart {
+		if i > 0 && (len(intPart)-i)%3 == 0 {
+			result = append(result, ',')
+		}
+		result = append(result, byte(c))
 	}
-	return fmt.Sprintf("-€%'.f", -v)
+	if neg {
+		return "-€" + string(result)
+	}
+	return "€" + string(result)
 }
 
 func padRight(s string, n int) string {

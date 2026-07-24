@@ -72,24 +72,23 @@ func Summary(rows []models.BudgetRow, rta float64) string {
 
 		// Left amount
 		left := ""
-		if r.Remaining >= 0 {
-			left = fmt.Sprintf("+€%.0f left", r.Remaining)
+		if r.Remaining > 0 {
+			left = fmt.Sprintf("+%s left", formatAmount(r.Remaining))
+		} else if r.Remaining < 0 {
+			left = fmt.Sprintf("-%s over", formatAmount(-r.Remaining))
 		} else {
-			left = fmt.Sprintf("-€%.0f over", -r.Remaining)
-		}
-		if r.Remaining == 0 {
 			left = "€0 left"
 		}
 
 		b.WriteString(fmt.Sprintf("\n  %s %s\n", r.Emoji, r.Name))
 		b.WriteString(fmt.Sprintf("     %s   %s\n", bar, left))
-		b.WriteString(fmt.Sprintf("     €%.0f / €%.0f", r.Spent, r.Available))
+		b.WriteString(fmt.Sprintf("     %s / %s", formatAmount(r.Spent), formatAmount(r.Available)))
 
 		totalSpent += r.Spent
 		totalBudget += r.Available
 	}
 
-	b.WriteString(fmt.Sprintf("\n\n────────────────────────────────\n💵 Total: €%.0f / €%.0f", totalSpent, totalBudget))
+	b.WriteString(fmt.Sprintf("\n\n────────────────\n💵 Total: %s / %s", formatAmount(totalSpent), formatAmount(totalBudget)))
 	return b.String()
 }
 

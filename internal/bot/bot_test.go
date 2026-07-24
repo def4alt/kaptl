@@ -654,6 +654,20 @@ func TestMoveE2E(t *testing.T) {
 	}
 }
 
+func TestBudgetInteractive(t *testing.T) {
+	b, store := testBot(t)
+	store.CreateCategory(nil, 303330553, "Groceries", "🍞")
+
+	processUpdate(b, staticCb("budgets"))
+	processUpdate(b, callbackUpdate("budget|1"))
+	processUpdate(b, textUpdate("3000"))
+
+	budgets, _ := store.GetBudgets(nil, 303330553)
+	if len(budgets) != 1 || budgets[0].Amount != 3000 {
+		t.Fatalf("budget not set via interactive: %+v", budgets)
+	}
+}
+
 func TestDebugCatAdd(t *testing.T) {
 	b, store := testBot(t)
 	u := textUpdate("/cat add 🍞 Groceries")

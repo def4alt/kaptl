@@ -876,6 +876,7 @@ func (b *Bot) handleCallback(c tele.Context) error {
 	case cbBudget:
 		catID, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
+			log.Printf("budget callback parse: %v", err)
 			return c.Respond(&tele.CallbackResponse{Text: "Invalid category"})
 		}
 
@@ -884,10 +885,16 @@ func (b *Bot) handleCallback(c tele.Context) error {
 			EditingBudget: catID,
 		})
 
+		log.Printf("budget callback: category=%d, user=%d", catID, userID)
+
 		cats, _ := b.Store.GetCategories(ctx, userID)
 		for _, cat := range cats {
 			if cat.ID == catID {
-				return c.Edit(fmt.Sprintf("%s *%s*\n\nEnter the monthly budget amount:", cat.Emoji, cat.Name), cancelBtn())
+				err := c.Edit(fmt.Sprintf("%s *%s*\n\nEnter the monthly budget amount:", cat.Emoji, cat.Name), cancelBtn())
+				if err != nil {
+					log.Printf("budget edit: %v", err)
+				}
+				return err
 			}
 		}
 		return c.Edit("Enter the monthly budget amount:", cancelBtn())

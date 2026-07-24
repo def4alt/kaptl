@@ -57,7 +57,7 @@ func testBot(t *testing.T) (*Bot, *memStore) {
 		States: make(map[int64]*userState),
 	}
 
-	b.registerHandlers()
+	RegisterHandlers(b.Tele, b)
 	return b, store
 }
 

@@ -246,7 +246,11 @@ func Recent(txs []models.Transaction) string {
 	if len(txs) == 0 {
 		return "No transactions yet!"
 	}
-	var lines []string
+
+	const w = 20
+	var b strings.Builder
+	b.WriteString("📋 *Recent*\n")
+
 	for _, t := range txs {
 		sign := "➖"
 		if t.Type == "income" {
@@ -254,17 +258,26 @@ func Recent(txs []models.Transaction) string {
 		} else if t.Type == "transfer" {
 			sign = "↔️"
 		}
-		line := fmt.Sprintf("%s *%.2f* — %s", sign, t.Amount, t.AccountName)
+		amount := formatAmount(t.Amount)
+
+		b.WriteString(fmt.Sprintf("\n┌%s┐\n", strings.Repeat("─", w+2)))
+		header := fmt.Sprintf("%s %s", sign, amount)
+		b.WriteString(fmt.Sprintf("│ %s%s │\n", header, strings.Repeat(" ", w-len(header)-1)))
+
+		if t.CategoryEmoji != "" {
+			cat := fmt.Sprintf("%s %s", t.CategoryEmoji, t.CategoryName)
+			b.WriteString(fmt.Sprintf("│ %s%s │\n", cat, strings.Repeat(" ", w-len(cat)-1)))
+		}
 		if t.Type == "transfer" && t.Description != "" {
-			line += " " + t.Description
+			b.WriteString(fmt.Sprintf("│ %s%s │\n", t.Description, strings.Repeat(" ", w-len(t.Description)-1)))
 		}
-		if t.CategoryEmoji != "" && t.CategoryName != "" {
-			line += fmt.Sprintf(" | %s %s", t.CategoryEmoji, t.CategoryName)
-		}
-		line += fmt.Sprintf("\n  _%s_", t.CreatedAt.Format("Jan 2 15:04"))
-		lines = append(lines, line)
+
+		footer := fmt.Sprintf("%s · %s", t.AccountName, t.CreatedAt.Format("Jan 2 15:04"))
+		b.WriteString(fmt.Sprintf("│ %s%s │\n", footer, strings.Repeat(" ", w-len(footer)-1)))
+		b.WriteString(fmt.Sprintf("└%s┘", strings.Repeat("─", w+2)))
 	}
-	return "📋 *Recent Transactions*\n\n" + strings.Join(lines, "\n")
+
+	return b.String()
 }
 
 // ─── Response builders ─────────────────────────────────────

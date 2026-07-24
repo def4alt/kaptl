@@ -262,3 +262,21 @@ func (m *memStore) GetBudgets(ctx context.Context, userID int64) ([]models.Budge
 	}
 	return result, nil
 }
+
+func (m *memStore) GetReadyToAssign(ctx context.Context, userID int64) (float64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var income float64
+	var assigned float64
+	for _, t := range m.transactions {
+		if t.UserID == userID && t.Type == "income" {
+			income += t.Amount
+		}
+	}
+	for _, b := range m.budgets {
+		if b.UserID == userID {
+			assigned += b.Amount
+		}
+	}
+	return income - assigned, nil
+}

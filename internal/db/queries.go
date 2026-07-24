@@ -266,3 +266,19 @@ func (d *DB) GetBudgets(ctx context.Context, userID int64) ([]models.Budget, err
 	defer rows.Close()
 	return pgx.CollectRows(rows, pgx.RowToStructByName[models.Budget])
 }
+
+// GetReadyToAssign returns how much money is available to budget.
+// Formula: total income - total budget amounts assigned.
+func (d *DB) GetReadyToAssign(ctx context.Context, userID int64) (float64, error) {
+	var rta float64
+	err := d.Pool.QueryRow(ctx, `
+		SELECT
+			COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0)
+			- COALESCE((SELECT SUM(amount) FROM budgets WHERE user_id = $1), 0)
+		FROM transactions WHERE user_id = $1
+	`, userID).Scan(&rta)
+	if err != nil {
+		return 0, fmt.Errorf("get ready to assign: %w", err)
+	}
+	return rta, nil
+}

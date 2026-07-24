@@ -615,6 +615,13 @@ func (b *Bot) handleSummary(c tele.Context) error {
 	}
 
 	msg := fmt.Sprintf("📊 *Budget Summary — %s*\n", time.Now().Format("January 2006"))
+	if rta, err := b.Store.GetReadyToAssign(ctx, userID); err == nil {
+		color := "🟢"
+		if rta < 0 {
+			color = "🔴"
+		}
+		msg += fmt.Sprintf("\n💵 *Ready to Assign:* %s €%.0f\n", color, rta)
+	}
 	msg += strings.Join(lines, "\n")
 	msg += fmt.Sprintf("\n\n💵 Total: *%.0f / %.0f* (%.0f left)", totalSpent, totalBudget, totalBudget-totalSpent)
 
@@ -935,7 +942,7 @@ func (b *Bot) receiveBudgetAmount(c tele.Context, state *userState) error {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
-	intervalDays, intervalMonths := defaultInterval() // monthly default for interactive
+	intervalDays, intervalMonths := defaultInterval()
 
 	_, err = b.Store.SetBudget(ctx, c.Sender().ID, state.EditingBudget, intervalDays, intervalMonths, amount)
 	if err != nil {

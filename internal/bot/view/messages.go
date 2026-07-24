@@ -33,7 +33,8 @@ Tap "➖ Expense" → pick category → type amount → pick account → done!
 
 // ─── Summary ──────────────────────────────────────────────
 
-const barWidth = 20
+const barWidth = 14
+const cardWidth = 16
 
 func Summary(rows []models.BudgetRow, rta float64) string {
 	var b strings.Builder
@@ -80,7 +81,8 @@ func Summary(rows []models.BudgetRow, rta float64) string {
 			left = "€0 left"
 		}
 
-		b.WriteString(fmt.Sprintf("\n  %s %s\n", r.Emoji, r.Name))
+		name := truncate(fmt.Sprintf("%s %s", r.Emoji, r.Name), 24)
+		b.WriteString(fmt.Sprintf("\n  %s\n", name))
 		b.WriteString(fmt.Sprintf("     %s   %d%%\n", bar, int(pct*100)))
 		b.WriteString(fmt.Sprintf("     %s / %s  ·  %s", formatAmount(r.Spent), formatAmount(r.Available), left))
 
@@ -99,7 +101,7 @@ func Accounts(accs []models.Account) string {
 		return "No accounts yet.\n\n`/acc add 💳 Name [currency]`"
 	}
 
-	const w = 20
+	w := cardWidth
 
 	var total float64
 	var b strings.Builder
@@ -107,7 +109,7 @@ func Accounts(accs []models.Account) string {
 
 	for _, a := range accs {
 		total += a.Balance
-		name := fmt.Sprintf("%s %s", a.Emoji, a.Name)
+		name := truncate(fmt.Sprintf("%s %s", a.Emoji, a.Name), w-1)
 		amount := formatAmount(a.Balance)
 
 		b.WriteString(fmt.Sprintf("\n┌%s┐\n", strings.Repeat("─", w+2)))
@@ -151,6 +153,13 @@ func padTo(s string, width int) string {
 func max(a, b int) int {
 	if a > b { return a }
 	return b
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-1] + "…"
 }
 
 func padRight(s string, n int) string {
@@ -219,7 +228,7 @@ func Budgets(cats []models.Category, budgets []models.Budget) string {
 		bm[bd.CategoryID] = bd
 	}
 
-	const w = 20
+	w := cardWidth
 	var b strings.Builder
 	b.WriteString("🎯 *Budgets*\n")
 
@@ -259,7 +268,7 @@ func Recent(txs []models.Transaction) string {
 		return "No transactions yet!"
 	}
 
-	const w = 20
+	w := cardWidth
 	var b strings.Builder
 	b.WriteString("📋 *Recent*\n")
 

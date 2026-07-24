@@ -2,40 +2,64 @@ package bot
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/def4alt/kaptl/internal/models"
 	tele "gopkg.in/telebot.v4"
 )
 
-// ─── Inline button data (unique identifiers for callbacks) ──
+// ─── Static inline buttons (handled via Handle(&btn, ...)) ──
 
 var (
-	btnAddExpense  = tele.Btn{Unique: "add_expense", Text: "➕ Expense"}
-	btnAddIncome   = tele.Btn{Unique: "add_income", Text: "💵 Income"}
-	btnSummary     = tele.Btn{Unique: "summary", Text: "📊 Summary"}
-	btnAccounts    = tele.Btn{Unique: "accounts", Text: "💰 Accounts"}
-	btnCategories  = tele.Btn{Unique: "categories", Text: "🏷️ Categories"}
-	btnBudgets     = tele.Btn{Unique: "budgets", Text: "🎯 Budgets"}
-	btnRecent      = tele.Btn{Unique: "recent", Text: "📋 Recent"}
-	btnCancel      = tele.Btn{Unique: "cancel", Text: "❌ Cancel"}
+	btnAddExpense = tele.Btn{Unique: "add_expense", Text: "➕ Expense"}
+	btnAddIncome  = tele.Btn{Unique: "add_income", Text: "💵 Income"}
+	btnSummary    = tele.Btn{Unique: "summary", Text: "📊 Summary"}
+	btnAccounts   = tele.Btn{Unique: "accounts", Text: "💰 Accounts"}
+	btnCategories = tele.Btn{Unique: "categories", Text: "🏷️ Categories"}
+	btnBudgets    = tele.Btn{Unique: "budgets", Text: "🎯 Budgets"}
+	btnRecent     = tele.Btn{Unique: "recent", Text: "📋 Recent"}
+	btnCancel     = tele.Btn{Unique: "cancel", Text: "❌ Cancel"}
 )
+
+// ─── Callback data prefixes (telebot pipes them: "cat|5") ──
+
+const (
+	cbCat    = "cat"    // category pick: cat|<id>
+	cbBudget = "budget" // budget pick: budget|<id>
+	cbAcc    = "acc"    // account pick: acc|<id>
+	cbCancel = "cancel" // cancel wizard
+)
+
+// parseCallback splits "prefix|value" into two parts.
+func parseCallback(data string) (prefix, value string) {
+	parts := strings.SplitN(data, "|", 2)
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	return data, ""
+}
+
+// callbackData builds a telebot callback data string.
+func callbackData(prefix string, id int64) string {
+	return prefix + "|" + strconv.FormatInt(id, 10)
+}
 
 // ─── Category selection keyboard ──────────────────────────
 
-func categoryKeyboard(cats []models.Category, prefix string) *tele.ReplyMarkup {
+func categoryKeyboard(cats []models.Category) *tele.ReplyMarkup {
 	menu := &tele.ReplyMarkup{}
 	var rows []tele.Row
 
 	for _, cat := range cats {
-		data := fmt.Sprintf("%scat_%d", prefix, cat.ID)
-		btn := menu.Data(fmt.Sprintf("%s %s", cat.Emoji, cat.Name), data)
+		btn := menu.Data(
+			fmt.Sprintf("%s %s", cat.Emoji, cat.Name),
+			callbackData(cbCat, cat.ID),
+		)
 		rows = append(rows, menu.Row(btn))
 	}
 
-	if prefix == "budget_" {
-		rows = append(rows, menu.Row(menu.Data("❌ Cancel", "cancel")))
-	}
-
+	rows = append(rows, menu.Row(cancelDataBtn(menu)))
 	menu.Inline(rows...)
 	return menu
 }
@@ -47,12 +71,14 @@ func budgetCategoryKeyboard(cats []models.Category) *tele.ReplyMarkup {
 	var rows []tele.Row
 
 	for _, cat := range cats {
-		data := fmt.Sprintf("budget_%d", cat.ID)
-		btn := menu.Data(fmt.Sprintf("%s %s", cat.Emoji, cat.Name), data)
+		btn := menu.Data(
+			fmt.Sprintf("%s %s", cat.Emoji, cat.Name),
+			callbackData(cbBudget, cat.ID),
+		)
 		rows = append(rows, menu.Row(btn))
 	}
 
-	rows = append(rows, menu.Row(menu.Data("❌ Cancel", "cancel")))
+	rows = append(rows, menu.Row(cancelDataBtn(menu)))
 	menu.Inline(rows...)
 	return menu
 }
@@ -64,23 +90,36 @@ func accountKeyboard(accs []models.Account) *tele.ReplyMarkup {
 	var rows []tele.Row
 
 	for _, a := range accs {
-		emoji := "💳"
-		switch a.Type {
-		case "cash":
-			emoji = "💵"
-		case "savings":
-			emoji = "🏦"
-		default:
-			emoji = "🏛️"
-		}
-		data := fmt.Sprintf("acc_%d", a.ID)
-		btn := menu.Data(fmt.Sprintf("%s %s", emoji, a.Name), data)
+		emoji := accountEmoji(a.Type)
+		btn := menu.Data(
+			fmt.Sprintf("%s %s", emoji, a.Name),
+			callbackData(cbAcc, a.ID),
+		)
 		rows = append(rows, menu.Row(btn))
 	}
 
-	rows = append(rows, menu.Row(menu.Data("❌ Cancel", "cancel")))
+	rows = append(rows, menu.Row(cancelDataBtn(menu)))
 	menu.Inline(rows...)
 	return menu
+}
+
+func accountEmoji(t string) string {
+	switch t {
+	case "cash":
+		return "💵"
+	case "savings":
+		return "🏦"
+	case "credit_card":
+		return "💳"
+	default:
+		return "🏛️"
+	}
+}
+
+// ─── Cancel button (as data, not static Btn) ──────────────
+
+func cancelDataBtn(menu *tele.ReplyMarkup) tele.Btn {
+	return menu.Data("❌ Cancel", cbCancel)
 }
 
 // ─── Main menu ────────────────────────────────────────────
@@ -96,10 +135,10 @@ func mainMenu() *tele.ReplyMarkup {
 	return menu
 }
 
-// ─── Cancel button only ───────────────────────────────────
+// ─── Cancel button only (reuse static btn) ────────────────
 
 func cancelBtn() *tele.ReplyMarkup {
 	menu := &tele.ReplyMarkup{}
-	menu.Inline(menu.Row(btnCancel))
+	menu.Inline(menu.Row(cancelDataBtn(menu)))
 	return menu
 }

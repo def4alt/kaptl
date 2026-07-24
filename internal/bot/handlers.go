@@ -321,7 +321,7 @@ func (b *Bot) handleAddExpense(c tele.Context) error {
 		return c.Send("No categories yet! Use `/cat add 🍞 Name` to create one.", mainMenu())
 	}
 
-	return c.Send("*Pick a category:*", categoryKeyboard(cats, ""))
+	return c.Send("*Pick a category:*", categoryKeyboard(cats))
 }
 
 // ─── Add Income ───────────────────────────────────────────
@@ -674,15 +674,26 @@ func (b *Bot) receiveBudgetAmount(c tele.Context, state *userState) error {
 }
 
 // ─── Dynamic Callback Handler ─────────────────────────────
+// All dynamic inline buttons (category picks, account picks, budget picks, cancel)
+// route through here. Uses structured callback data: "prefix|id"
 
 func (b *Bot) handleCallback(c tele.Context) error {
 	data := c.Callback().Data
 	userID := c.Sender().ID
 	ctx := context.Background()
 
-	switch {
-	case strings.HasPrefix(data, "cat_"):
-		idStr := strings.TrimPrefix(data, "cat_")
+	// Always acknowledge the callback so Telegram stops the spinner.
+	// Specific handlers below override this with their own response.
+	defer c.Respond()
+
+	prefix, idStr := parseCallback(data)
+
+	switch prefix {
+	case cbCancel:
+		delete(b.States, userID)
+		return c.Edit("❌ Cancelled.", mainMenu())
+
+	case cbCat:
 		catID, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
 			return c.Respond(&tele.CallbackResponse{Text: "Invalid category"})
@@ -702,8 +713,7 @@ func (b *Bot) handleCallback(c tele.Context) error {
 		}
 		return c.Edit("Enter the amount:", cancelBtn())
 
-	case strings.HasPrefix(data, "budget_"):
-		idStr := strings.TrimPrefix(data, "budget_")
+	case cbBudget:
 		catID, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
 			return c.Respond(&tele.CallbackResponse{Text: "Invalid category"})
@@ -722,8 +732,7 @@ func (b *Bot) handleCallback(c tele.Context) error {
 		}
 		return c.Edit("Enter the monthly budget amount:", cancelBtn())
 
-	case strings.HasPrefix(data, "acc_"):
-		idStr := strings.TrimPrefix(data, "acc_")
+	case cbAcc:
 		accID, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
 			return c.Respond(&tele.CallbackResponse{Text: "Invalid account"})
@@ -773,5 +782,5 @@ func (b *Bot) handleCallback(c tele.Context) error {
 		return c.Respond(&tele.CallbackResponse{Text: "Done!"})
 	}
 
-	return c.Respond()
+	return nil
 }

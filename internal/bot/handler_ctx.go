@@ -2,7 +2,6 @@ package bot
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/def4alt/kaptl/internal/models"
@@ -129,23 +128,6 @@ func deleteByName[T any](items []T, name string, getName func(T) string, deleteF
 		}
 	}
 	return false, nil
-}
-
-// ─── Response builders ─────────────────────────────────────
-
-// respond creates a success message for a created entity.
-func respondCreated(emoji, name, kind string) string {
-	return fmt.Sprintf("✅ Created %s: %s *%s*", kind, emoji, name)
-}
-
-// respondDeleted creates a success message for a deleted entity.
-func respondDeleted(emoji, name, kind string) string {
-	return fmt.Sprintf("✅ Deleted %s: %s %s", kind, emoji, name)
-}
-
-// respondError creates an error message.
-func respondError(msg string) string {
-	return fmt.Sprintf("❌ %s", msg)
 }
 
 // ─── Name validation ──────────────────────────────────────

@@ -382,6 +382,7 @@ func (b *Bot) handleSummary(c tele.Context) error {
 
 	cats, err := b.DB.GetBudgetSummary(ctx, userID)
 	if err != nil {
+		log.Printf("get budget summary: %v", err)
 		return c.Send("Error loading summary", mainMenu())
 	}
 
@@ -415,6 +416,7 @@ func (b *Bot) handleAccounts(c tele.Context) error {
 
 	accs, err := b.DB.GetAccounts(ctx, userID)
 	if err != nil {
+		log.Printf("get accounts: %v", err)
 		return c.Send("Error loading accounts", mainMenu())
 	}
 
@@ -438,6 +440,7 @@ func (b *Bot) handleCategories(c tele.Context) error {
 
 	cats, err := b.DB.GetCategories(ctx, userID)
 	if err != nil {
+		log.Printf("get categories: %v", err)
 		return c.Send("Error loading categories", mainMenu())
 	}
 
@@ -501,6 +504,7 @@ func (b *Bot) handleRecent(c tele.Context) error {
 
 	txs, err := b.DB.GetRecentTransactions(ctx, userID, 10)
 	if err != nil {
+		log.Printf("get recent transactions: %v", err)
 		return c.Send("Error loading transactions", mainMenu())
 	}
 

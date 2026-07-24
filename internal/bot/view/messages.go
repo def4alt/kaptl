@@ -234,11 +234,12 @@ func Groups(groups []models.CategoryGroup) string {
 	if len(groups) == 0 {
 		return "No groups yet.\n\n`/group add 📁 Name` to create one."
 	}
-	var lines []string
+	var b strings.Builder
+	b.WriteString("📁 *Groups*\n")
 	for _, g := range groups {
-		lines = append(lines, fmt.Sprintf("%s %s", g.Emoji, g.Name))
+		b.WriteString(fmt.Sprintf("\n%s %s", g.Emoji, g.Name))
 	}
-	return "📁 *Groups*\n\n" + strings.Join(lines, "\n") + "\n\n`/group add 📁 Name`  `/group rm Name`"
+	return b.String()
 }
 
 func Recent(txs []models.Transaction) string {

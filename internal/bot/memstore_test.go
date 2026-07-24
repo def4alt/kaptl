@@ -217,32 +217,36 @@ func (m *memStore) SetBudget(ctx context.Context, userID int64, categoryID int64
 	return b, nil
 }
 
-func (m *memStore) GetBudgetSummary(ctx context.Context, userID int64) ([]models.Category, error) {
+func (m *memStore) GetBudgetSummary(ctx context.Context, userID int64) ([]models.BudgetRow, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	month := time.Now().Format("2006-01") + "-01"
-	var result []models.Category
+	var result []models.BudgetRow
 
 	for _, c := range m.categories {
 		if c.UserID != userID {
 			continue
 		}
-		cat := *c
-		// Sum expenses for this category this month
+		row := models.BudgetRow{
+			ID:        c.ID,
+			UserID:    c.UserID,
+			Name:      c.Name,
+			Emoji:     c.Emoji,
+			CreatedAt: c.CreatedAt,
+		}
 		for _, t := range m.transactions {
 			if t.UserID == userID && t.CategoryID != nil && *t.CategoryID == c.ID &&
 				t.Type == "expense" && t.CreatedAt.Format("2006-01") == month[:7] {
-				cat.Spent += t.Amount
+				row.Spent += t.Amount
 			}
 		}
-		// Find budget
 		key := fmt.Sprintf("%d|%d|%s", userID, c.ID, month)
 		if b, ok := m.budgets[key]; ok {
-			cat.Budget = b.Amount
+			row.Budget = b.Amount
 		}
-		cat.Remaining = cat.Budget - cat.Spent
-		result = append(result, cat)
+		row.Remaining = row.Budget - row.Spent
+		result = append(result, row)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result, nil

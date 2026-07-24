@@ -96,10 +96,7 @@ func (d *DB) CreateCategory(ctx context.Context, userID int64, name, emoji strin
 
 func (d *DB) GetCategories(ctx context.Context, userID int64) ([]models.Category, error) {
 	rows, err := d.Pool.Query(ctx, `
-		SELECT id, user_id, name, emoji, created_at,
-			   0.0::float8 AS spent,
-			   0.0::float8 AS budget,
-			   0.0::float8 AS remaining
+		SELECT id, user_id, name, emoji, created_at
 		FROM categories
 		WHERE user_id = $1
 		ORDER BY name
@@ -108,7 +105,7 @@ func (d *DB) GetCategories(ctx context.Context, userID int64) ([]models.Category
 		return nil, fmt.Errorf("get categories: %w", err)
 	}
 	defer rows.Close()
-	return pgx.CollectRows(rows, pgx.RowToStructByPos[models.Category])
+	return pgx.CollectRows(rows, pgx.RowToStructByName[models.Category])
 }
 
 func (d *DB) DeleteCategory(ctx context.Context, categoryID int64) error {
@@ -173,7 +170,7 @@ func (d *DB) SetBudget(ctx context.Context, userID int64, categoryID int64, mont
 }
 
 // GetBudgetSummary returns categories with spent/budget/remaining for current month.
-func (d *DB) GetBudgetSummary(ctx context.Context, userID int64) ([]models.Category, error) {
+func (d *DB) GetBudgetSummary(ctx context.Context, userID int64) ([]models.BudgetRow, error) {
 	month := time.Now().Format("2006-01") + "-01"
 	rows, err := d.Pool.Query(ctx, `
 		SELECT
@@ -197,7 +194,7 @@ func (d *DB) GetBudgetSummary(ctx context.Context, userID int64) ([]models.Categ
 		return nil, fmt.Errorf("get budget summary: %w", err)
 	}
 	defer rows.Close()
-	return pgx.CollectRows(rows, pgx.RowToStructByPos[models.Category])
+	return pgx.CollectRows(rows, pgx.RowToStructByName[models.BudgetRow])
 }
 
 // GetBudgets returns all budgets for a user.

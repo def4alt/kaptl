@@ -30,10 +30,18 @@ type Category struct {
 	Name      string    `json:"name"`
 	Emoji     string    `json:"emoji"`
 	CreatedAt time.Time `json:"created_at"`
-	// Computed
-	Spent     float64 `json:"spent,omitempty"`
-	Budget    float64 `json:"budget,omitempty"`
-	Remaining float64 `json:"remaining,omitempty"`
+}
+
+// BudgetRow is a category with computed spending fields for the summary view.
+type BudgetRow struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	Name      string    `json:"name"`
+	Emoji     string    `json:"emoji"`
+	CreatedAt time.Time `json:"created_at"`
+	Spent     float64   `json:"spent"`
+	Budget    float64   `json:"budget"`
+	Remaining float64   `json:"remaining"`
 }
 
 type Transaction struct {

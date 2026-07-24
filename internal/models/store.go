@@ -24,6 +24,6 @@ type Store interface {
 
 	// Budgets
 	SetBudget(ctx context.Context, userID int64, categoryID int64, month string, amount float64) (*Budget, error)
-	GetBudgetSummary(ctx context.Context, userID int64) ([]Category, error)
+	GetBudgetSummary(ctx context.Context, userID int64) ([]BudgetRow, error)
 	GetBudgets(ctx context.Context, userID int64) ([]Budget, error)
 }

@@ -3,7 +3,6 @@ package bot
 import (
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/def4alt/kaptl/internal/models"
 	tele "gopkg.in/telebot.v4"
@@ -23,28 +22,14 @@ var (
 	btnCancel     = tele.Btn{Unique: "cancel", Text: "❌ Cancel"}
 )
 
-// ─── Callback data prefixes (telebot pipes them: "cat|5") ──
+// ─── Callback data prefixes (telebot routes as \f+prefix) ──
 
 const (
-	cbCat    = "cat"    // category pick: cat|<id>
-	cbBudget = "budget" // budget pick: budget|<id>
-	cbAcc    = "acc"    // account pick: acc|<id>
+	cbCat    = "cat"    // category pick
+	cbBudget = "budget" // budget pick
+	cbAcc    = "acc"    // account pick
 	cbCancel = "cancel" // cancel wizard
 )
-
-// parseCallback splits "prefix|value" into two parts.
-func parseCallback(data string) (prefix, value string) {
-	parts := strings.SplitN(data, "|", 2)
-	if len(parts) == 2 {
-		return parts[0], parts[1]
-	}
-	return data, ""
-}
-
-// callbackData builds a telebot callback data string.
-func callbackData(prefix string, id int64) string {
-	return prefix + "|" + strconv.FormatInt(id, 10)
-}
 
 // ─── Category selection keyboard ──────────────────────────
 
@@ -55,7 +40,7 @@ func categoryKeyboard(cats []models.Category) *tele.ReplyMarkup {
 	for _, cat := range cats {
 		btn := menu.Data(
 			fmt.Sprintf("%s %s", cat.Emoji, cat.Name),
-			callbackData(cbCat, cat.ID),
+			cbCat, strconv.FormatInt(cat.ID, 10),
 		)
 		rows = append(rows, menu.Row(btn))
 	}
@@ -74,7 +59,7 @@ func budgetCategoryKeyboard(cats []models.Category) *tele.ReplyMarkup {
 	for _, cat := range cats {
 		btn := menu.Data(
 			fmt.Sprintf("%s %s", cat.Emoji, cat.Name),
-			callbackData(cbBudget, cat.ID),
+			cbBudget, strconv.FormatInt(cat.ID, 10),
 		)
 		rows = append(rows, menu.Row(btn))
 	}
@@ -93,7 +78,7 @@ func accountKeyboard(accs []models.Account) *tele.ReplyMarkup {
 	for _, a := range accs {
 		btn := menu.Data(
 			fmt.Sprintf("%s %s", a.Emoji, a.Name),
-			callbackData(cbAcc, a.ID),
+			cbAcc, strconv.FormatInt(a.ID, 10),
 		)
 		rows = append(rows, menu.Row(btn))
 	}
@@ -115,7 +100,7 @@ func accountKeyboardExclude(accs []models.Account, excludeID int64) *tele.ReplyM
 		}
 		btn := menu.Data(
 			fmt.Sprintf("%s %s", a.Emoji, a.Name),
-			callbackData(cbAcc, a.ID),
+			cbAcc, strconv.FormatInt(a.ID, 10),
 		)
 		rows = append(rows, menu.Row(btn))
 	}

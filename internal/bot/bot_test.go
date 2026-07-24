@@ -233,11 +233,11 @@ func TestExpenseWizard(t *testing.T) {
 	store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 0)
 
 	// Tap "➕ Expense" → pick category "Food" (callback: cat|1)
-	processUpdate(b, callbackUpdate("cat|1"))
+	processUpdate(b, staticCb("cat|1"))
 	// Type amount
 	processUpdate(b, textUpdate("42.50"))
 	// Pick account "Mono" (callback: acc|1)
-	processUpdate(b, callbackUpdate("acc|1"))
+	processUpdate(b, staticCb("acc|1"))
 
 	txs, _ := store.GetRecentTransactions(nil, 303330553, 10)
 	if len(txs) != 1 {
@@ -263,7 +263,7 @@ func TestHandleTextInWizard(t *testing.T) {
 	store.CreateCategory(nil, 303330553, "Food", "🍞")
 
 	// Start expense wizard by picking category
-	processUpdate(b, callbackUpdate("cat|1"))
+	processUpdate(b, staticCb("cat|1"))
 	// Enter an invalid amount (not a number)
 	processUpdate(b, textUpdate("not-a-number"))
 	// Should show error, not crash
@@ -319,11 +319,11 @@ func TestWizardCancel(t *testing.T) {
 	store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 0)
 
 	// Start expense wizard
-	processUpdate(b, callbackUpdate("cat|1"))
+	processUpdate(b, staticCb("cat|1"))
 	// Type amount
 	processUpdate(b, textUpdate("42.50"))
 	// Cancel instead of picking account
-	processUpdate(b, callbackUpdate("cancel"))
+	processUpdate(b, staticCb("cancel"))
 
 	// No transaction should be created
 	txs, _ := store.GetRecentTransactions(nil, 303330553, 10)
@@ -336,7 +336,7 @@ func TestRecentEmpty(t *testing.T) {
 	b, _ := testBot(t)
 	processUpdate(b, textUpdate("/menu"))
 	// Trigger the 📋 Recent button by simulating callback
-	processUpdate(b, callbackUpdate("recent"))
+	processUpdate(b, staticCb("recent"))
 	// Should show "No transactions yet!"
 }
 
@@ -348,7 +348,7 @@ func TestIncomeWizard(t *testing.T) {
 	processUpdate(b, staticCb("add_income"))
 	processUpdate(b, textUpdate("1500"))
 	// Pick account
-	processUpdate(b, callbackUpdate("acc|1"))
+	processUpdate(b, staticCb("acc|1"))
 
 	txs, _ := store.GetRecentTransactions(nil, 303330553, 10)
 	if len(txs) != 1 {
@@ -371,7 +371,7 @@ func TestSummaryWithData(t *testing.T) {
 	store.SetBudget(nil, 303330553, 1, month, 5000)
 	store.CreateTransaction(nil, 303330553, 1, intPtr(1), "expense", 2500, nil, "lunch")
 
-	processUpdate(b, callbackUpdate("summary"))
+	processUpdate(b, staticCb("summary"))
 
 	summary, _ := store.GetBudgetSummary(nil, 303330553)
 	if len(summary) != 1 {
@@ -432,7 +432,7 @@ func TestE2E(t *testing.T) {
 	t.Log("Step 3: Add income")
 	processUpdate(b, staticCb("add_income"))
 	processUpdate(b, textUpdate("5000"))
-	processUpdate(b, callbackUpdate(fmt.Sprintf("acc|%d", accID)))
+	processUpdate(b, staticCb(fmt.Sprintf("acc|%d", accID)))
 
 	txs, _ := store.GetRecentTransactions(nil, 303330553, 10)
 	if len(txs) != 1 || txs[0].Type != "income" || txs[0].Amount != 5000 {
@@ -442,14 +442,14 @@ func TestE2E(t *testing.T) {
 
 	// 4. Add expenses
 	t.Log("Step 4: Add expenses")
-	processUpdate(b, callbackUpdate(fmt.Sprintf("cat|%d", catID)))
+	processUpdate(b, staticCb(fmt.Sprintf("cat|%d", catID)))
 	processUpdate(b, textUpdate("42.50"))
-	processUpdate(b, callbackUpdate(fmt.Sprintf("acc|%d", accID)))
+	processUpdate(b, staticCb(fmt.Sprintf("acc|%d", accID)))
 
 	// Add another expense
-	processUpdate(b, callbackUpdate(fmt.Sprintf("cat|%d", catID)))
+	processUpdate(b, staticCb(fmt.Sprintf("cat|%d", catID)))
 	processUpdate(b, textUpdate("18.90"))
-	processUpdate(b, callbackUpdate(fmt.Sprintf("acc|%d", accID)))
+	processUpdate(b, staticCb(fmt.Sprintf("acc|%d", accID)))
 
 	txs, _ = store.GetRecentTransactions(nil, 303330553, 10)
 	if len(txs) != 3 {
@@ -483,7 +483,7 @@ func TestE2E(t *testing.T) {
 
 	// 6. View summary
 	t.Log("Step 6: View summary")
-	processUpdate(b, callbackUpdate("summary"))
+	processUpdate(b, staticCb("summary"))
 
 	summary, _ := store.GetBudgetSummary(nil, 303330553)
 	if len(summary) != 1 {
@@ -505,15 +505,15 @@ func TestE2E(t *testing.T) {
 
 	// 7. View budgets
 	t.Log("Step 7: View budgets")
-	processUpdate(b, callbackUpdate("budgets"))
+	processUpdate(b, staticCb("budgets"))
 
 	// 8. View recent transactions
 	t.Log("Step 8: Recent transactions")
-	processUpdate(b, callbackUpdate("recent"))
+	processUpdate(b, staticCb("recent"))
 
 	// 9. View accounts with updated balance
 	t.Log("Step 9: Account balance")
-	processUpdate(b, callbackUpdate("accounts"))
+	processUpdate(b, staticCb("accounts"))
 	accs, _ = store.GetAccounts(nil, 303330553)
 	t.Logf("  ✅ Final balance: %s %s = %.2f %s", accs[0].Emoji, accs[0].Name, accs[0].Balance, accs[0].Currency)
 
@@ -569,8 +569,8 @@ func TestMoveInteractive(t *testing.T) {
 
 	// Tap 🔀 Move → pick source (Mono, id=1) → pick dest (Cash, id=2) → enter amount
 	processUpdate(b, staticCb("move"))
-	processUpdate(b, callbackUpdate("acc|1"))    // source
-	processUpdate(b, callbackUpdate("acc|2"))    // destination
+	processUpdate(b, staticCb("acc|1"))    // source
+	processUpdate(b, staticCb("acc|2"))    // destination
 	processUpdate(b, textUpdate("300"))          // amount
 
 	txs, _ := store.GetRecentTransactions(nil, 303330553, 10)
@@ -586,8 +586,8 @@ func TestMoveInteractiveCancel(t *testing.T) {
 
 	// Tap 🔀 Move → pick source → cancel
 	processUpdate(b, staticCb("move"))
-	processUpdate(b, callbackUpdate("acc|1"))
-	processUpdate(b, callbackUpdate("cancel"))
+	processUpdate(b, staticCb("acc|1"))
+	processUpdate(b, staticCb("cancel"))
 
 	txs, _ := store.GetRecentTransactions(nil, 303330553, 10)
 	if len(txs) != 0 {
@@ -611,8 +611,8 @@ func TestMoveE2E(t *testing.T) {
 
 	// Interactive move: Mono → Cash, 400
 	processUpdate(b, staticCb("move"))
-	processUpdate(b, callbackUpdate("acc|1"))
-	processUpdate(b, callbackUpdate("acc|2"))
+	processUpdate(b, staticCb("acc|1"))
+	processUpdate(b, staticCb("acc|2"))
 	processUpdate(b, textUpdate("400"))
 
 	// Check balances
@@ -659,7 +659,7 @@ func TestBudgetInteractive(t *testing.T) {
 	store.CreateCategory(nil, 303330553, "Groceries", "🍞")
 
 	processUpdate(b, staticCb("budgets"))
-	processUpdate(b, callbackUpdate("budget|1"))
+	processUpdate(b, staticCb("budget|1"))
 	processUpdate(b, textUpdate("3000"))
 
 	budgets, _ := store.GetBudgets(nil, 303330553)

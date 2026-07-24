@@ -169,7 +169,12 @@ func (b *Bot) registerHandlers() {
 	b.Tele.Handle(&btnCancel, b.handleCancel)
 
 	// Dynamic callbacks (category/account/budget picks)
-	b.Tele.Handle(tele.OnCallback, b.handleCallback)
+	// Registered with \f prefix — telebot routes menu.Data() callbacks
+	// through static handler matching by Unique field.
+	b.Tele.Handle("\f"+cbCat, b.handleCatPick)
+	b.Tele.Handle("\f"+cbBudget, b.handleBudgetPick)
+	b.Tele.Handle("\f"+cbAcc, b.handleAccPick)
+	b.Tele.Handle("\f"+cbCancel, b.handleDynamicCancel)
 
 	// Text input (amount during wizard, or unrecognized)
 	b.Tele.Handle(tele.OnText, b.handleText)
@@ -833,151 +838,155 @@ func (b *Bot) receiveBudgetAmount(c tele.Context, state *userState) error {
 	return c.Send(fmt.Sprintf("✅ Budget for *%s*: *%.0f* this month", catName, amount), mainMenu())
 }
 
-// ─── Dynamic Callback Handler ─────────────────────────────
-// All dynamic inline buttons (category picks, account picks, budget picks, cancel)
-// route through here. Uses structured callback data: "prefix|id"
+// ─── Dynamic callback handlers (registered per prefix) ─────
+// telebot routes menu.Data(prefix, id) callbacks through \f+prefix.
+// c.Callback().Unique = prefix, c.Callback().Data = payload.
 
-func (b *Bot) handleCallback(c tele.Context) error {
-	data := c.Callback().Data
+func (b *Bot) handleCatPick(c tele.Context) error {
 	userID := c.Sender().ID
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
-	log.Printf("callback: data=%q, user=%d", data, userID)
-
-	// Always acknowledge the callback so Telegram stops the spinner.
-	// Specific handlers below override this with their own response.
 	defer c.Respond()
 
-	prefix, idStr := parseCallback(data)
-
-	switch prefix {
-	case cbCancel:
-		b.clearState(userID)
-		return c.Edit("❌ Cancelled.", mainMenu())
-
-	case cbCat:
-		catID, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
-			return c.Respond(&tele.CallbackResponse{Text: "Invalid category"})
-		}
-
-		b.setState(userID, &userState{
-			Step:       "awaiting_amount",
-			CategoryID: catID,
-			TxType:     "expense",
-		})
-
-		cats, _ := b.Store.GetCategories(ctx, userID)
-		for _, cat := range cats {
-			if cat.ID == catID {
-				return c.Edit(fmt.Sprintf("%s *%s*\n\nEnter the amount:", cat.Emoji, cat.Name), cancelBtn())
-			}
-		}
-		return c.Edit("Enter the amount:", cancelBtn())
-
-	case cbBudget:
-		catID, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
-			log.Printf("budget callback parse: %v", err)
-			return c.Respond(&tele.CallbackResponse{Text: "Invalid category"})
-		}
-
-		b.setState(userID, &userState{
-			Step:          "awaiting_budget_amount",
-			EditingBudget: catID,
-		})
-
-		log.Printf("budget callback: category=%d, user=%d", catID, userID)
-
-		cats, _ := b.Store.GetCategories(ctx, userID)
-		for _, cat := range cats {
-			if cat.ID == catID {
-				err := c.Edit(fmt.Sprintf("%s *%s*\n\nEnter the monthly budget amount:", cat.Emoji, cat.Name), cancelBtn())
-				if err != nil {
-					log.Printf("budget edit: %v", err)
-				}
-				return err
-			}
-		}
-		return c.Edit("Enter the monthly budget amount:", cancelBtn())
-
-	case cbAcc:
-		accID, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
-			return c.Respond(&tele.CallbackResponse{Text: "Invalid account"})
-		}
-
-		state := b.stateFor(userID); ok := state != nil
-		if !ok {
-			return c.Respond(&tele.CallbackResponse{Text: "No active operation"})
-		}
-
-		acc, err := b.Store.GetAccount(ctx, accID)
-		if err != nil {
-			return c.Respond(&tele.CallbackResponse{Text: "Account not found"})
-		}
-
-		switch state.TxType {
-		case "expense":
-			tx, err := b.Store.CreateTransaction(ctx, userID, acc.ID, &state.CategoryID, "expense", state.Amount, nil, state.Description)
-			if err != nil {
-				return c.Edit("❌ Error saving transaction. Try again.", mainMenu())
-			}
-			b.clearState(userID)
-
-			catName := ""
-			cats, _ := b.Store.GetCategories(ctx, userID)
-			for _, c := range cats {
-				if c.ID == state.CategoryID {
-					catName = c.Name
-					break
-				}
-			}
-
-			return c.Edit(fmt.Sprintf("✅ Logged: *%.2f* on *%s* (%s)\n_%s_",
-				tx.Amount, acc.Name, catName, tx.CreatedAt.Format("Jan 2 15:04")), mainMenu())
-
-		case "income":
-			tx, err := b.Store.CreateTransaction(ctx, userID, acc.ID, nil, "income", state.Amount, nil, "")
-			if err != nil {
-				return c.Edit("❌ Error saving income. Try again.", mainMenu())
-			}
-			b.clearState(userID)
-
-			return c.Edit(fmt.Sprintf("✅ Income: +*%.2f* on *%s*\n_%s_",
-				tx.Amount, acc.Name, tx.CreatedAt.Format("Jan 2 15:04")), mainMenu())
-
-		case "transfer":
-			switch state.Step {
-			case "awaiting_move_source":
-				// Record source, show destination picker
-				state.Step = "awaiting_move_target"
-				state.AccountID = acc.ID
-				accs, _ := b.Store.GetAccounts(ctx, userID)
-				return c.Edit(
-					fmt.Sprintf("*From:* %s %s\n\n*To which account?*", acc.Emoji, acc.Name),
-					accountKeyboardExclude(accs, acc.ID),
-				)
-
-			case "awaiting_move_target":
-				// Record destination, ask for amount
-				state.Step = "awaiting_move_amount"
-				state.TargetAccountID = acc.ID
-				destAcc := acc
-				srcAcc, _ := b.Store.GetAccount(ctx, state.AccountID)
-				srcName := "Unknown"
-				if srcAcc != nil {
-					srcName = fmt.Sprintf("%s %s", srcAcc.Emoji, srcAcc.Name)
-				}
-				return c.Edit(
-					fmt.Sprintf("*From:* %s\n*To:* %s %s\n\n*Enter the amount to transfer:*", srcName, destAcc.Emoji, destAcc.Name),
-					cancelBtn(),
-				)
-			}
-		}
-
-		return c.Respond(&tele.CallbackResponse{Text: "Done!"})
+	idStr := c.Callback().Data
+	catID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: "Invalid category"})
 	}
 
-	return nil
+	b.setState(userID, &userState{
+		Step:       "awaiting_amount",
+		CategoryID: catID,
+		TxType:     "expense",
+	})
+
+	cats, _ := b.Store.GetCategories(ctx, userID)
+	for _, cat := range cats {
+		if cat.ID == catID {
+			return c.Edit(fmt.Sprintf("%s *%s*\n\nEnter the amount:", cat.Emoji, cat.Name), cancelBtn())
+		}
+	}
+	return c.Edit("Enter the amount:", cancelBtn())
+}
+
+func (b *Bot) handleBudgetPick(c tele.Context) error {
+	userID := c.Sender().ID
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
+
+	defer c.Respond()
+
+	idStr := c.Callback().Data
+	catID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		log.Printf("budget pick parse: %v", err)
+		return c.Respond(&tele.CallbackResponse{Text: "Invalid category"})
+	}
+
+	b.setState(userID, &userState{
+		Step:          "awaiting_budget_amount",
+		EditingBudget: catID,
+	})
+
+	log.Printf("budget pick: category=%d, user=%d", catID, userID)
+
+	cats, _ := b.Store.GetCategories(ctx, userID)
+	for _, cat := range cats {
+		if cat.ID == catID {
+			err := c.Edit(fmt.Sprintf("%s *%s*\n\nEnter the monthly budget amount:", cat.Emoji, cat.Name), cancelBtn())
+			if err != nil {
+				log.Printf("budget pick edit: %v", err)
+			}
+			return err
+		}
+	}
+	return c.Edit("Enter the monthly budget amount:", cancelBtn())
+}
+
+func (b *Bot) handleAccPick(c tele.Context) error {
+	userID := c.Sender().ID
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
+
+	defer c.Respond()
+
+	idStr := c.Callback().Data
+	accID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: "Invalid account"})
+	}
+
+	state := b.stateFor(userID)
+	if state == nil {
+		return c.Respond(&tele.CallbackResponse{Text: "No active operation"})
+	}
+
+	acc, err := b.Store.GetAccount(ctx, accID)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: "Account not found"})
+	}
+
+	switch state.TxType {
+	case "expense":
+		tx, err := b.Store.CreateTransaction(ctx, userID, acc.ID, &state.CategoryID, "expense", state.Amount, nil, state.Description)
+		if err != nil {
+			return c.Edit("❌ Error saving transaction. Try again.", mainMenu())
+		}
+		b.clearState(userID)
+
+		catName := ""
+		cats, _ := b.Store.GetCategories(ctx, userID)
+		for _, c := range cats {
+			if c.ID == state.CategoryID {
+				catName = c.Name
+				break
+			}
+		}
+
+		return c.Edit(fmt.Sprintf("✅ Logged: *%.2f* on *%s* (%s)\n_%s_",
+			tx.Amount, acc.Name, catName, tx.CreatedAt.Format("Jan 2 15:04")), mainMenu())
+
+	case "income":
+		tx, err := b.Store.CreateTransaction(ctx, userID, acc.ID, nil, "income", state.Amount, nil, "")
+		if err != nil {
+			return c.Edit("❌ Error saving income. Try again.", mainMenu())
+		}
+		b.clearState(userID)
+
+		return c.Edit(fmt.Sprintf("✅ Income: +*%.2f* on *%s*\n_%s_",
+			tx.Amount, acc.Name, tx.CreatedAt.Format("Jan 2 15:04")), mainMenu())
+
+	case "transfer":
+		switch state.Step {
+		case "awaiting_move_source":
+			state.Step = "awaiting_move_target"
+			state.AccountID = acc.ID
+			accs, _ := b.Store.GetAccounts(ctx, userID)
+			return c.Edit(
+				fmt.Sprintf("*From:* %s %s\n\n*To which account?*", acc.Emoji, acc.Name),
+				accountKeyboardExclude(accs, acc.ID),
+			)
+
+		case "awaiting_move_target":
+			state.Step = "awaiting_move_amount"
+			state.TargetAccountID = acc.ID
+			destAcc := acc
+			srcAcc, _ := b.Store.GetAccount(ctx, state.AccountID)
+			srcName := "Unknown"
+			if srcAcc != nil {
+				srcName = fmt.Sprintf("%s %s", srcAcc.Emoji, srcAcc.Name)
+			}
+			return c.Edit(
+				fmt.Sprintf("*From:* %s\n*To:* %s %s\n\n*Enter the amount to transfer:*", srcName, destAcc.Emoji, destAcc.Name),
+				cancelBtn(),
+			)
+		}
+	}
+
+	return c.Respond(&tele.CallbackResponse{Text: "Done!"})
+}
+
+func (b *Bot) handleDynamicCancel(c tele.Context) error {
+	userID := c.Sender().ID
+	defer c.Respond()
+	b.clearState(userID)
+	return c.Edit("❌ Cancelled.", mainMenu())
 }

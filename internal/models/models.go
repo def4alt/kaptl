@@ -28,8 +28,19 @@ type Account struct {
 type Category struct {
 	ID        int64     `json:"id"`
 	UserID    int64     `json:"user_id"`
+	GroupID   *int64    `json:"group_id,omitempty"`
 	Name      string    `json:"name"`
 	Emoji     string    `json:"emoji"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// CategoryGroup groups categories together (e.g. "Needs & Musts").
+type CategoryGroup struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	Name      string    `json:"name"`
+	Emoji     string    `json:"emoji"`
+	SortOrder int       `json:"sort_order"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -42,7 +53,11 @@ type BudgetRow struct {
 	CreatedAt time.Time `json:"created_at"`
 	Spent     float64   `json:"spent"`
 	Budget    float64   `json:"budget"`
+	Rollover  float64   `json:"rollover"`
+	Available float64   `json:"available"`
 	Remaining float64   `json:"remaining"`
+	GroupName string    `json:"group_name,omitempty"`
+	GroupID   *int64    `json:"group_id,omitempty"`
 }
 
 type Transaction struct {
@@ -66,9 +81,10 @@ type Budget struct {
 	UserID         int64     `json:"user_id"`
 	CategoryID     int64     `json:"category_id"`
 	PeriodStart    time.Time `json:"period_start"`
-	IntervalDays   int       `json:"interval_days"`   // 7=weekly, 14=biweekly, 0 for monthly+
-	IntervalMonths int       `json:"interval_months"` // 1=monthly, 3=quarterly, 0 for day-based
+	IntervalDays   int       `json:"interval_days"`
+	IntervalMonths int       `json:"interval_months"`
 	Amount         float64   `json:"amount"`
+	Rollover       float64   `json:"rollover"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 

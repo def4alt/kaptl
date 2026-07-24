@@ -10,16 +10,17 @@ import (
 	"github.com/def4alt/kaptl/internal/models"
 )
 
-// memStore is an in-memory implementation of models.Store for testing.
 type memStore struct {
 	mu           sync.Mutex
 	users        map[int64]*models.User
 	accounts     map[int64]*models.Account
+	groups       map[int64]*models.CategoryGroup
 	categories   map[int64]*models.Category
 	transactions []*models.Transaction
-	budgets      map[string]*models.Budget // key: "userID|categoryID|month"
+	budgets      map[string]*models.Budget
 
 	nextAccountID  int64
+	nextGroupID    int64
 	nextCategoryID int64
 	nextTxID       int64
 	nextBudgetID   int64
@@ -29,6 +30,7 @@ func newMemStore() *memStore {
 	return &memStore{
 		users:      make(map[int64]*models.User),
 		accounts:   make(map[int64]*models.Account),
+		groups:     make(map[int64]*models.CategoryGroup),
 		categories: make(map[int64]*models.Category),
 		budgets:    make(map[string]*models.Budget),
 	}
@@ -38,17 +40,9 @@ func (m *memStore) GetOrCreateUser(ctx context.Context, telegramID int64, userna
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if u, ok := m.users[telegramID]; ok {
-		u.Username = username
-		u.FirstName = firstName
 		return u, nil
 	}
-	u := &models.User{
-		TelegramID:   telegramID,
-		Username:     username,
-		FirstName:    firstName,
-		LanguageCode: lang,
-		CreatedAt:    time.Now(),
-	}
+	u := &models.User{TelegramID: telegramID, Username: username, FirstName: firstName, LanguageCode: lang, CreatedAt: time.Now()}
 	m.users[telegramID] = u
 	return u, nil
 }
@@ -57,15 +51,7 @@ func (m *memStore) CreateAccount(ctx context.Context, userID int64, name, emoji,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.nextAccountID++
-	a := &models.Account{
-		ID:             m.nextAccountID,
-		UserID:         userID,
-		Name:           name,
-		Emoji:          emoji,
-		Currency:       currency,
-		InitialBalance: initialBalance,
-		CreatedAt:      time.Now(),
-	}
+	a := &models.Account{ID: m.nextAccountID, UserID: userID, Name: name, Emoji: emoji, Currency: currency, InitialBalance: initialBalance, CreatedAt: time.Now()}
 	m.accounts[a.ID] = a
 	return a, nil
 }
@@ -76,15 +62,12 @@ func (m *memStore) GetAccounts(ctx context.Context, userID int64) ([]models.Acco
 	var result []models.Account
 	for _, a := range m.accounts {
 		if a.UserID == userID {
-			// Compute balance from transactions
 			balance := a.InitialBalance
 			for _, t := range m.transactions {
 				if t.AccountID == a.ID {
 					switch t.Type {
-					case "income":
-						balance += t.Amount
-					case "expense", "transfer":
-						balance -= t.Amount
+					case "income": balance += t.Amount
+					case "expense", "transfer": balance -= t.Amount
 					}
 				}
 				if t.TransferAccountID != nil && *t.TransferAccountID == a.ID {
@@ -109,23 +92,50 @@ func (m *memStore) GetAccount(ctx context.Context, id int64) (*models.Account, e
 	return a, nil
 }
 
-func (m *memStore) CreateCategory(ctx context.Context, userID int64, name, emoji string) (*models.Category, error) {
+func (m *memStore) CreateGroup(ctx context.Context, userID int64, name, emoji string) (*models.CategoryGroup, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Check for duplicate
+	m.nextGroupID++
+	g := &models.CategoryGroup{ID: m.nextGroupID, UserID: userID, Name: name, Emoji: emoji, CreatedAt: time.Now()}
+	m.groups[g.ID] = g
+	return g, nil
+}
+
+func (m *memStore) GetGroups(ctx context.Context, userID int64) ([]models.CategoryGroup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []models.CategoryGroup
+	for _, g := range m.groups {
+		if g.UserID == userID {
+			result = append(result, *g)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].SortOrder < result[j].SortOrder })
+	return result, nil
+}
+
+func (m *memStore) DeleteGroup(ctx context.Context, groupID int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.groups, groupID)
+	for _, c := range m.categories {
+		if c.GroupID != nil && *c.GroupID == groupID {
+			c.GroupID = nil
+		}
+	}
+	return nil
+}
+
+func (m *memStore) CreateCategory(ctx context.Context, userID int64, name, emoji string, groupID *int64) (*models.Category, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, c := range m.categories {
 		if c.UserID == userID && c.Name == name {
 			return nil, fmt.Errorf("category already exists")
 		}
 	}
 	m.nextCategoryID++
-	c := &models.Category{
-		ID:        m.nextCategoryID,
-		UserID:    userID,
-		Name:      name,
-		Emoji:     emoji,
-		CreatedAt: time.Now(),
-	}
+	c := &models.Category{ID: m.nextCategoryID, UserID: userID, GroupID: groupID, Name: name, Emoji: emoji, CreatedAt: time.Now()}
 	m.categories[c.ID] = c
 	return c, nil
 }
@@ -154,17 +164,7 @@ func (m *memStore) CreateTransaction(ctx context.Context, userID, accountID int6
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.nextTxID++
-	t := &models.Transaction{
-		ID:                m.nextTxID,
-		UserID:            userID,
-		AccountID:         accountID,
-		CategoryID:        categoryID,
-		Type:              txType,
-		Amount:            amount,
-		TransferAccountID: transferAccountID,
-		Description:       description,
-		CreatedAt:         time.Now(),
-	}
+	t := &models.Transaction{ID: m.nextTxID, UserID: userID, AccountID: accountID, CategoryID: categoryID, Type: txType, Amount: amount, TransferAccountID: transferAccountID, Description: description, CreatedAt: time.Now()}
 	m.transactions = append(m.transactions, t)
 	return t, nil
 }
@@ -177,7 +177,6 @@ func (m *memStore) GetRecentTransactions(ctx context.Context, userID int64, limi
 		t := m.transactions[i]
 		if t.UserID == userID {
 			tx := *t
-			// Fill in joined fields
 			if tx.CategoryID != nil {
 				if c, ok := m.categories[*tx.CategoryID]; ok {
 					tx.CategoryName = c.Name
@@ -208,53 +207,47 @@ func (m *memStore) SetBudget(ctx context.Context, userID int64, categoryID int64
 		return b, nil
 	}
 	m.nextBudgetID++
-	b := &models.Budget{
-		ID:             m.nextBudgetID,
-		UserID:         userID,
-		CategoryID:     categoryID,
-		PeriodStart:    time.Now(),
-		IntervalDays:   intervalDays,
-		IntervalMonths: intervalMonths,
-		Amount:         amount,
-		CreatedAt:      time.Now(),
-	}
+	b := &models.Budget{ID: m.nextBudgetID, UserID: userID, CategoryID: categoryID, PeriodStart: time.Now(), IntervalDays: intervalDays, IntervalMonths: intervalMonths, Amount: amount, CreatedAt: time.Now()}
 	m.budgets[key] = b
 	return b, nil
 }
 
-func (m *memStore) GetBudgetSummary(ctx context.Context, userID int64) ([]models.BudgetRow, error) {
+func (m *memStore) GetBudgetSummary(ctx context.Context, userID int64, periodOffset int) ([]models.BudgetRow, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	_ = periodOffset // not used in memStore — always current
 
 	var result []models.BudgetRow
-
 	for _, c := range m.categories {
 		if c.UserID != userID {
 			continue
 		}
-		row := models.BudgetRow{
-			ID:        c.ID,
-			UserID:    c.UserID,
-			Name:      c.Name,
-			Emoji:     c.Emoji,
-			CreatedAt: c.CreatedAt,
-		}
-		// Find budget for this category
+		row := models.BudgetRow{ID: c.ID, UserID: c.UserID, Name: c.Name, Emoji: c.Emoji, CreatedAt: c.CreatedAt, GroupID: c.GroupID}
 		key := fmt.Sprintf("%d|%d", userID, c.ID)
 		if bd, ok := m.budgets[key]; ok {
 			row.Budget = bd.Amount
-			// Sum expenses since period_start
+			row.Rollover = bd.Rollover
+			row.Available = bd.Amount + bd.Rollover
 			for _, t := range m.transactions {
-				if t.UserID == userID && t.CategoryID != nil && *t.CategoryID == c.ID &&
-					t.Type == "expense" && t.CreatedAt.After(bd.PeriodStart) {
+				if t.UserID == userID && t.CategoryID != nil && *t.CategoryID == c.ID && t.Type == "expense" && t.CreatedAt.After(bd.PeriodStart) {
 					row.Spent += t.Amount
 				}
 			}
 		}
-		row.Remaining = row.Budget - row.Spent
+		row.Remaining = row.Available - row.Spent
+		if c.GroupID != nil {
+			if g, ok := m.groups[*c.GroupID]; ok {
+				row.GroupName = g.Name
+			}
+		}
 		result = append(result, row)
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].GroupName != result[j].GroupName {
+			return result[i].GroupName < result[j].GroupName
+		}
+		return result[i].Name < result[j].Name
+	})
 	return result, nil
 }
 

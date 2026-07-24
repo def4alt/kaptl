@@ -19,11 +19,22 @@ CREATE TABLE IF NOT EXISTS accounts (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS categories (
+CREATE TABLE IF NOT EXISTS category_groups (
     id SERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
     name TEXT NOT NULL,
-    emoji TEXT NOT NULL DEFAULT '📌',
+    emoji TEXT NOT NULL DEFAULT '"'"'📁'"'"',
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS categories (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+    group_id INTEGER REFERENCES category_groups(id) ON DELETE SET NULL,
+    name TEXT NOT NULL,
+    emoji TEXT NOT NULL DEFAULT '"'"'📌'"'"',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, name)
 );
@@ -47,6 +58,7 @@ CREATE TABLE IF NOT EXISTS budgets (
     period_start TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     interval_days INTEGER NOT NULL DEFAULT 0,
     interval_months INTEGER NOT NULL DEFAULT 1,
+    rollover NUMERIC(12,2) NOT NULL DEFAULT 0,
     amount NUMERIC(12,2) NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, category_id)

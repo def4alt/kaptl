@@ -144,8 +144,8 @@ func TestCatAddNoArgs(t *testing.T) {
 func TestCatList(t *testing.T) {
 	b, store := testBot(t)
 
-	store.CreateCategory(nil, 303330553, "Food", "🍞")
-	store.CreateCategory(nil, 303330553, "Transport", "🚗")
+	store.CreateCategory(nil, 303330553, "Food", "🍞", nil)
+	store.CreateCategory(nil, 303330553, "Transport", "🚗", nil)
 
 	processUpdate(b, textUpdate("/cat list"))
 
@@ -158,7 +158,7 @@ func TestCatList(t *testing.T) {
 func TestCatRemove(t *testing.T) {
 	b, store := testBot(t)
 
-	store.CreateCategory(nil, 303330553, "Food", "🍞")
+	store.CreateCategory(nil, 303330553, "Food", "🍞", nil)
 	processUpdate(b, textUpdate("/cat rm Food"))
 
 	cats, _ := store.GetCategories(nil, 303330553)
@@ -213,10 +213,10 @@ func TestAccAddDefaults(t *testing.T) {
 func TestBudgetSet(t *testing.T) {
 	b, store := testBot(t)
 
-	store.CreateCategory(nil, 303330553, "Groceries", "🍞")
+	store.CreateCategory(nil, 303330553, "Groceries", "🍞", nil)
 	processUpdate(b, textUpdate("/budget set Groceries 5000"))
 
-	summary, _ := store.GetBudgetSummary(nil, 303330553)
+	summary, _ := store.GetBudgetSummary(nil, 303330553, 0)
 	if len(summary) != 1 {
 		t.Fatalf("expected 1 category in summary, got %d", len(summary))
 	}
@@ -228,7 +228,7 @@ func TestBudgetSet(t *testing.T) {
 func TestExpenseWizard(t *testing.T) {
 	b, store := testBot(t)
 
-	store.CreateCategory(nil, 303330553, "Food", "🍞")
+	store.CreateCategory(nil, 303330553, "Food", "🍞", nil)
 	store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 0)
 
 	// Tap "➕ Expense" → pick category "Food" (callback: cat|1)
@@ -259,7 +259,7 @@ func TestHandleText(t *testing.T) {
 
 func TestHandleTextInWizard(t *testing.T) {
 	b, store := testBot(t)
-	store.CreateCategory(nil, 303330553, "Food", "🍞")
+	store.CreateCategory(nil, 303330553, "Food", "🍞", nil)
 
 	// Start expense wizard by picking category
 	processUpdate(b, staticCb("cat|1"))
@@ -270,7 +270,7 @@ func TestHandleTextInWizard(t *testing.T) {
 
 func TestHandleCallbackUnknown(t *testing.T) {
 	b, _ := testBot(t)
-	processUpdate(b, callbackUpdate("unknown|data"))
+	processUpdate(b, staticCb("unknown|data"))
 	// Should not panic — defer c.Respond() handles it
 }
 
@@ -314,7 +314,7 @@ func TestAuthMiddleware(t *testing.T) {
 
 func TestWizardCancel(t *testing.T) {
 	b, store := testBot(t)
-	store.CreateCategory(nil, 303330553, "Food", "🍞")
+	store.CreateCategory(nil, 303330553, "Food", "🍞", nil)
 	store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 0)
 
 	// Start expense wizard
@@ -363,7 +363,7 @@ func TestIncomeWizard(t *testing.T) {
 
 func TestSummaryWithData(t *testing.T) {
 	b, store := testBot(t)
-	store.CreateCategory(nil, 303330553, "Food", "🍞")
+	store.CreateCategory(nil, 303330553, "Food", "🍞", nil)
 	store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 0)
 
 	store.SetBudget(nil, 303330553, 1, 0, 1, 5000)
@@ -371,7 +371,7 @@ func TestSummaryWithData(t *testing.T) {
 
 	processUpdate(b, staticCb("summary"))
 
-	summary, _ := store.GetBudgetSummary(nil, 303330553)
+	summary, _ := store.GetBudgetSummary(nil, 303330553, 0)
 	if len(summary) != 1 {
 		t.Fatalf("expected 1 category in summary, got %d", len(summary))
 	}
@@ -385,7 +385,7 @@ func TestSummaryWithData(t *testing.T) {
 
 func TestDuplicateCategory(t *testing.T) {
 	b, store := testBot(t)
-	store.CreateCategory(nil, 303330553, "Food", "🍞")
+	store.CreateCategory(nil, 303330553, "Food", "🍞", nil)
 	processUpdate(b, textUpdate("/cat add 🍕 Food"))
 	// memStore returns error for duplicate, handler sends error message
 }
@@ -481,7 +481,7 @@ func TestE2E(t *testing.T) {
 	t.Log("Step 6: View summary")
 	processUpdate(b, staticCb("summary"))
 
-	summary, _ := store.GetBudgetSummary(nil, 303330553)
+	summary, _ := store.GetBudgetSummary(nil, 303330553, 0)
 	if len(summary) != 1 {
 		t.Fatalf("expected 1 category in summary, got %d", len(summary))
 	}
@@ -652,7 +652,7 @@ func TestMoveE2E(t *testing.T) {
 
 func TestBudgetInteractive(t *testing.T) {
 	b, store := testBot(t)
-	store.CreateCategory(nil, 303330553, "Groceries", "🍞")
+	store.CreateCategory(nil, 303330553, "Groceries", "🍞", nil)
 
 	processUpdate(b, staticCb("budgets"))
 	processUpdate(b, staticCb("budget|1"))

@@ -137,6 +137,7 @@ func (b *Bot) registerCommands() {
 		{Text: "acc", Description: "/acc add 💳 Name [currency] | /acc list"},
 		{Text: "budget", Description: "/budget set Name amount [weekly|monthly|quarterly]"},
 		{Text: "move", Description: "/move amount from Account to Account"},
+		{Text: "group", Description: "/group add 📁 Name | /group rm Name | /group"},
 	}
 	if err := b.Tele.SetCommands(cmds); err != nil {
 		log.Printf("register commands: %v", err)
@@ -168,6 +169,9 @@ func (b *Bot) registerHandlers() {
 	b.Tele.Handle(&btnRecent, b.handleRecent)
 	b.Tele.Handle(&btnCancel, b.handleCancel)
 
+	// Group commands
+	b.Tele.Handle("/group", b.handleGroup)
+
 	// Dynamic callbacks (category/account/budget picks)
 	// Registered with \f prefix — telebot routes menu.Data() callbacks
 	// through static handler matching by Unique field.
@@ -195,6 +199,8 @@ func (b *Bot) handleHelp(c tele.Context) error {
 /acc add 💳 Name [currency] – Create account
 /acc list – List accounts
 /budget set Name amount [interval] – Set recurring budget
+/group add 📁 Name – Create category group
+/group rm Name – Delete group
 /move amount from Account to Account – Transfer between accounts
 
 *Quick expense:*
@@ -239,7 +245,7 @@ func (b *Bot) catAdd(c tele.Context, args []string) error {
 	name := strings.Join(rest, " ")
 
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
-	cat, err := b.Store.CreateCategory(ctx, c.Sender().ID, name, emoji)
+	cat, err := b.Store.CreateCategory(ctx, c.Sender().ID, name, emoji, nil)
 	if err != nil {
 		return c.Send("❌ Category already exists or error occurred.", mainMenu())
 	}
@@ -322,6 +328,72 @@ func (b *Bot) accAdd(c tele.Context, args []string) error {
 	}
 
 	return c.Send(fmt.Sprintf("✅ Created: %s *%s* (%s)", emoji, acc.Name, acc.Currency), mainMenu())
+}
+
+// ─── /group — manage category groups ──────────────────────
+
+func (b *Bot) handleGroup(c tele.Context) error {
+	args := c.Args()
+	if len(args) == 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
+		groups, _ := b.Store.GetGroups(ctx, c.Sender().ID)
+		if len(groups) == 0 {
+			return c.Send("No groups yet.\n\n`/group add 📁 Name` to create one.", mainMenu())
+		}
+		var lines []string
+		for _, g := range groups {
+			lines = append(lines, fmt.Sprintf("%s %s", g.Emoji, g.Name))
+		}
+		return c.Send("📁 *Groups*\n\n"+strings.Join(lines, "\n")+
+			"\n\n_Add:_ `/group add 📁 Name`\n_Remove:_ `/group rm Name`", mainMenu())
+	}
+
+	switch args[0] {
+	case "add":
+		if len(args) < 2 {
+			return c.Send("Usage: `/group add 📁 Name`", mainMenu())
+		}
+		emoji := "📁"
+		rest := args[1:]
+		first := []rune(args[1])
+		if len(first) <= 4 && first[0] > 127 {
+			emoji = args[1]
+			rest = args[2:]
+		}
+		name := strings.Join(rest, " ")
+		if name == "" {
+			return c.Send("Usage: `/group add 📁 Name`", mainMenu())
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+		defer cancel()
+		g, err := b.Store.CreateGroup(ctx, c.Sender().ID, name, emoji)
+		if err != nil {
+			return c.Send("❌ Group already exists or error occurred.", mainMenu())
+		}
+		return c.Send(fmt.Sprintf("✅ Created group: %s *%s*", g.Emoji, g.Name), mainMenu())
+
+	case "rm", "remove":
+		if len(args) < 2 {
+			return c.Send("Usage: `/group rm Name`", mainMenu())
+		}
+		name := strings.Join(args[1:], " ")
+		ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+		defer cancel()
+		groups, _ := b.Store.GetGroups(ctx, c.Sender().ID)
+		for _, g := range groups {
+			if strings.EqualFold(g.Name, name) {
+				if err := b.Store.DeleteGroup(ctx, g.ID); err != nil {
+					return c.Send("❌ Error deleting group.", mainMenu())
+				}
+				return c.Send(fmt.Sprintf("✅ Deleted group: %s %s", g.Emoji, g.Name), mainMenu())
+			}
+		}
+		return c.Send(fmt.Sprintf("Group *%s* not found.", name), mainMenu())
+
+	default:
+		return c.Send("Usage:\n`/group add 📁 Name`\n`/group rm Name`\n`/group` — list", mainMenu())
+	}
 }
 
 // ─── /budget — set budget ─────────────────────────────────
@@ -511,13 +583,13 @@ func (b *Bot) handleSummary(c tele.Context) error {
 	userID := c.Sender().ID
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
-	cats, err := b.Store.GetBudgetSummary(ctx, userID)
+	rows, err := b.Store.GetBudgetSummary(ctx, userID, 0)
 	if err != nil {
 		log.Printf("get budget summary: %v", err)
 		return c.Send("Error loading summary", mainMenu())
 	}
 
-	if len(cats) == 0 {
+	if len(rows) == 0 {
 		return c.Send("No categories yet. Use `/cat add 🍞 Name` to create some.", mainMenu())
 	}
 
@@ -525,14 +597,24 @@ func (b *Bot) handleSummary(c tele.Context) error {
 	totalSpent := 0.0
 
 	var lines []string
-	for _, cat := range cats {
-		lines = append(lines, fmt.Sprintf("%s *%s*: %.0f / %.0f (%.0f left)",
-			cat.Emoji, cat.Name, cat.Spent, cat.Budget, cat.Remaining))
-		totalBudget += cat.Budget
-		totalSpent += cat.Spent
+	lastGroup := ""
+
+	for _, r := range rows {
+		if r.GroupName != "" && r.GroupName != lastGroup {
+			lastGroup = r.GroupName
+			lines = append(lines, fmt.Sprintf("\n🏷️ *%s*", lastGroup))
+		}
+		line := fmt.Sprintf("%s *%s*: %.0f / %.0f (%.0f left)",
+			r.Emoji, r.Name, r.Spent, r.Available, r.Remaining)
+		if r.Rollover > 0 {
+			line += fmt.Sprintf("  _+%.0f rollover_", r.Rollover)
+		}
+		lines = append(lines, line)
+		totalBudget += r.Available
+		totalSpent += r.Spent
 	}
 
-	msg := fmt.Sprintf("📊 *Budget Summary — %s*\n\n", time.Now().Format("January 2006"))
+	msg := fmt.Sprintf("📊 *Budget Summary — %s*\n", time.Now().Format("January 2006"))
 	msg += strings.Join(lines, "\n")
 	msg += fmt.Sprintf("\n\n💵 Total: *%.0f / %.0f* (%.0f left)", totalSpent, totalBudget, totalBudget-totalSpent)
 

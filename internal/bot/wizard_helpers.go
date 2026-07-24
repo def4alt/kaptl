@@ -12,10 +12,10 @@ import (
 func (b *Bot) startWizard(uid int64, c tele.Context, step WizardStep, txType, prevStep string) *userState {
 	s := &userState{
 		Step:          step,
-		TxType:        txType,
-		TemplateMsgID: c.Message().ID,
+		
+		MsgID:  c.Message().ID,
 		ChatID:        c.Chat().ID,
-		PrevStep:      prevStep,
+		Prev:   prevStep,
 	}
 	b.setState(uid, s)
 	return s

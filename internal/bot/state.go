@@ -1,60 +1,107 @@
 package bot
 
-// WizardStep is a typed step in the conversational wizard state machine.
+// ─── Wizard variants (discriminated union) ─────────────────
+
+// Wizard is a sealed interface — only the types below implement it.
+type Wizard interface {
+	isWizard()
+	// Type returns a discriminator string for routing callbacks.
+	Type() string
+}
+
+// ExpenseWizard is the state for the expense logging flow.
+type ExpenseWizard struct {
+	CategoryID int64
+	Amount     float64
+}
+
+// IncomeWizard is the state for the income logging flow.
+type IncomeWizard struct {
+	Amount float64
+}
+
+// MoveWizard is the state for the account transfer flow.
+type MoveWizard struct {
+	SourceID      int64
+	DestinationID int64
+	Amount        float64
+}
+
+// BudgetWizard is the state for the budget setting flow.
+type BudgetWizard struct {
+	CategoryID int64
+	Amount     float64
+}
+
+// CreationWizard is the state for interactive entity creation.
+type CreationWizard struct {
+	Kind     string // "cat", "acc", "group"
+	Emoji    string
+	Name     string
+	CatGroup *int64 // for category creation group picker
+}
+
+// Seal the interface.
+func (ExpenseWizard) isWizard()  {}
+func (IncomeWizard) isWizard()   {}
+func (MoveWizard) isWizard()     {}
+func (BudgetWizard) isWizard()   {}
+func (CreationWizard) isWizard() {}
+
+// Type returns the discriminator.
+func (ExpenseWizard) Type() string  { return "expense" }
+func (IncomeWizard) Type() string   { return "income" }
+func (MoveWizard) Type() string     { return "transfer" }
+func (BudgetWizard) Type() string   { return "budget" }
+func (CreationWizard) Type() string { return "creation" }
+
+// ─── Wizard steps ──────────────────────────────────────────
+
 type WizardStep int
 
 const (
 	StepIdle WizardStep = iota
 
-	// Expense wizard
-	StepAwaitExpenseAmount
-	StepAwaitExpenseAccount
+	// Expense
+	StepExpenseAmount
+	StepExpenseAccount
 
-	// Income wizard
-	StepAwaitIncomeAmount
-	StepAwaitIncomeAccount
+	// Income
+	StepIncomeAmount
+	StepIncomeAccount
 
-	// Move wizard
-	StepAwaitMoveSource
-	StepAwaitMoveTarget
-	StepAwaitMoveAmount
+	// Move
+	StepMoveSource
+	StepMoveTarget
+	StepMoveAmount
 
-	// Budget wizard
-	StepAwaitBudgetAmount
-	StepAwaitBudgetInterval
+	// Budget
+	StepBudgetAmount
+	StepBudgetInterval
 
-	// Creation wizards
-	StepAwaitCatEmoji
-	StepAwaitCatName
-	StepAwaitCatGroup
-	StepAwaitAccEmoji
-	StepAwaitAccName
-	StepAwaitAccCurrency
-	StepAwaitGroupEmoji
-	StepAwaitGroupName
+	// Creation
+	StepCreateEmoji
+	StepCreateName
+	StepCreateGroup
+	StepCreateCurrency
 )
 
-// String returns the step name for debugging.
 func (s WizardStep) String() string {
 	names := map[WizardStep]string{
-		StepIdle:                "idle",
-		StepAwaitExpenseAmount:  "expense_amount",
-		StepAwaitExpenseAccount: "expense_account",
-		StepAwaitIncomeAmount:   "income_amount",
-		StepAwaitIncomeAccount:  "income_account",
-		StepAwaitMoveSource:     "move_source",
-		StepAwaitMoveTarget:     "move_target",
-		StepAwaitMoveAmount:     "move_amount",
-		StepAwaitBudgetAmount:   "budget_amount",
-		StepAwaitBudgetInterval: "budget_interval",
-		StepAwaitCatEmoji:       "cat_emoji",
-		StepAwaitCatName:        "cat_name",
-		StepAwaitCatGroup:       "cat_group",
-		StepAwaitAccEmoji:       "acc_emoji",
-		StepAwaitAccName:        "acc_name",
-		StepAwaitAccCurrency:    "acc_currency",
-		StepAwaitGroupEmoji:     "group_emoji",
-		StepAwaitGroupName:      "group_name",
+		StepIdle:            "idle",
+		StepExpenseAmount:   "expense_amount",
+		StepExpenseAccount:  "expense_account",
+		StepIncomeAmount:    "income_amount",
+		StepIncomeAccount:   "income_account",
+		StepMoveSource:      "move_source",
+		StepMoveTarget:      "move_target",
+		StepMoveAmount:      "move_amount",
+		StepBudgetAmount:    "budget_amount",
+		StepBudgetInterval:  "budget_interval",
+		StepCreateEmoji:     "create_emoji",
+		StepCreateName:      "create_name",
+		StepCreateGroup:     "create_group",
+		StepCreateCurrency:  "create_currency",
 	}
 	if n, ok := names[s]; ok {
 		return n
@@ -62,36 +109,36 @@ func (s WizardStep) String() string {
 	return "unknown"
 }
 
-// userState holds partial data during multi-step wizards.
+// ─── Runtime state ─────────────────────────────────────────
+
+// userState holds the wizard and shared context for a single user.
 type userState struct {
-	Step            WizardStep
-	CategoryID      int64
-	AccountID       int64
-	TargetAccountID int64
-	Amount          float64
-	Emoji           string // temp storage for emoji during creation wizards
-	Name            string // temp storage for name during creation wizards
-	TxType          string // "expense", "income", "transfer"
-	EditingBudget   int64
-	TemplateMsgID   int
-	ChatID          int64
-	PrevStep        string // for back navigation: "pick_category", "move_start", etc.
+	Wizard Wizard     // discriminated union — only one variant active
+	Step   WizardStep // current step within the wizard
+	MsgID  int        // template message ID for in-place editing
+	ChatID int64      // chat where the template lives
+	Prev   string     // previous step label for back navigation
 }
 
-// IsWizard returns true if the user is in a multi-step flow.
 func (s *userState) IsWizard() bool {
 	return s != nil && s.Step != StepIdle
 }
 
-// IsTextStep returns true if the current step expects text input.
 func (s *userState) IsTextStep() bool {
 	if s == nil {
 		return false
 	}
 	switch s.Step {
-	case StepAwaitExpenseAmount, StepAwaitIncomeAmount, StepAwaitMoveAmount,
-		StepAwaitBudgetAmount, StepAwaitCatName, StepAwaitAccName, StepAwaitGroupName:
+	case StepExpenseAmount, StepIncomeAmount, StepMoveAmount,
+		StepBudgetAmount, StepCreateName:
 		return true
 	}
 	return false
 }
+
+// expenseW returns the wizard as ExpenseWizard value. Mutate and reassign to state.Wizard.
+func (s *userState) expenseW() ExpenseWizard { return s.Wizard.(ExpenseWizard) }
+func (s *userState) incomeW() IncomeWizard   { return s.Wizard.(IncomeWizard) }
+func (s *userState) moveW() MoveWizard       { return s.Wizard.(MoveWizard) }
+func (s *userState) budgetW() BudgetWizard   { return s.Wizard.(BudgetWizard) }
+func (s *userState) creationW() CreationWizard { return s.Wizard.(CreationWizard) }

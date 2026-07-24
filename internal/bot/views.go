@@ -176,10 +176,10 @@ func progressTemplate(title string, fields map[string]string) string {
 }
 
 func (b *Bot) editTemplate(state *userState, text string, markup *tele.ReplyMarkup) error {
-	if state.TemplateMsgID == 0 || state.ChatID == 0 {
+	if state.MsgID == 0 || state.ChatID == 0 {
 		return fmt.Errorf("no template message")
 	}
-	msg := &tele.Message{ID: state.TemplateMsgID, Chat: &tele.Chat{ID: state.ChatID}}
+	msg := &tele.Message{ID: state.MsgID, Chat: &tele.Chat{ID: state.ChatID}}
 	_, err := b.Tele.Edit(msg, text, markup)
 	return err
 }

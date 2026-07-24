@@ -87,13 +87,13 @@ func (b *Bot) handleBackBtn(c tele.Context) error {
 		return c.Edit("No active operation.", mainMenu())
 	}
 
-	switch state.PrevStep {
+	switch state.Prev {
 	case "pick_category":
 		h := b.withCtx(c); defer h.done()
 		return c.Edit("*Pick a category:*", categoryKeyboard(h.cats()))
 	case "move_start":
 		h := b.withCtx(c); defer h.done()
-		state.Step = StepAwaitMoveSource
+		state.Step = StepMoveSource
 		return c.Edit("🔀 *Transfer*\n\nFrom: —\nTo: —\nAmount: —", accountKeyboard(h.accs()))
 	}
 	return c.Respond(&tele.CallbackResponse{Text: "Can't go back"})
@@ -108,56 +108,91 @@ func (b *Bot) handleEmojiPick(c tele.Context) error {
 
 	switch data {
 	case "new_cat":
-		b.startWizard(uid, c, StepAwaitCatEmoji, "", "")
+		b.setState(uid, &userState{
+			Wizard: CreationWizard{Kind: "cat"},
+			Step:   StepCreateEmoji,
+			MsgID:  c.Message().ID, ChatID: c.Chat().ID,
+		})
 		return c.Edit("🏷️ *New Category*\n\nEmoji: —\nName: —\nGroup: —\n\n_Pick an emoji:_", emojiKeyboard())
 	case "new_acc":
-		b.startWizard(uid, c, StepAwaitAccEmoji, "", "")
+		b.setState(uid, &userState{
+			Wizard: CreationWizard{Kind: "acc"},
+			Step:   StepCreateEmoji,
+			MsgID:  c.Message().ID, ChatID: c.Chat().ID,
+		})
 		return c.Edit("💰 *New Account*\n\nEmoji: —\nName: —\nCurrency: —\n\n_Pick an emoji:_", emojiKeyboard())
 	case "new_group":
-		b.startWizard(uid, c, StepAwaitGroupEmoji, "", "")
+		b.setState(uid, &userState{
+			Wizard: CreationWizard{Kind: "group"},
+			Step:   StepCreateEmoji,
+			MsgID:  c.Message().ID, ChatID: c.Chat().ID,
+		})
 		return c.Edit("📁 *New Group*\n\nEmoji: —\nName: —\n\n_Pick an emoji:_", emojiKeyboard())
 	default:
 		state := b.stateFor(uid)
 		if state == nil {
 			return c.Respond(&tele.CallbackResponse{Text: "No active operation"})
 		}
-		state.Emoji = data
+		w := state.creationW()
+		w.Emoji = data
+		state.Wizard = w
+		state.Step = StepCreateName
 
-		switch state.Step {
-		case StepAwaitCatEmoji:
-			state.Step = StepAwaitCatName
-			return c.Edit(fmt.Sprintf("🏷️ *New Category*\n\nEmoji: %s\nName: —\nGroup: —\n\n_Type the name:_", data), cancelBtn())
-		case StepAwaitAccEmoji:
-			state.Step = StepAwaitAccName
-			return c.Edit(fmt.Sprintf("💰 *New Account*\n\nEmoji: %s\nName: —\nCurrency: —\n\n_Type the name:_", data), cancelBtn())
-		case StepAwaitGroupEmoji:
-			state.Step = StepAwaitGroupName
-			return c.Edit(fmt.Sprintf("📁 *New Group*\n\nEmoji: %s\nName: —\n\n_Type the name:_", data), cancelBtn())
+		switch {
+		case state.Prev == "" && state.Step == StepCreateName:
+			// Determine context from data (new_cat/new_acc/new_group)
+			return c.Edit(fmt.Sprintf("Emoji: %s\n\n_Type the name:_", data), cancelBtn())
+		default:
+			return c.Edit(fmt.Sprintf("Emoji: %s\nName: —\n\n_Type the name:_", data), cancelBtn())
 		}
 	}
-	return c.Respond(&tele.CallbackResponse{Text: "Done"})
 }
+
+// receiveCreateName is the unified name receiver for all creation wizards.
+// It dispatches to the next step based on the creation context.
+func (b *Bot) receiveCreateName(c tele.Context, state *userState) error {
+	name := strings.TrimSpace(c.Text())
+	if !isValidName(name) {
+		return c.Send("Name must be 1-100 characters.", cancelBtn())
+	}
+
+	w := state.creationW()
+	w.Name = name
+	state.Wizard = w
+
+	h := b.withCtx(c); defer h.done()
+
+	switch w.Kind {
+	case "cat":
+		state.Step = StepCreateGroup
+		return c.Send(fmt.Sprintf("🏷️ *New Category*\n\nEmoji: %s\nName: %s\nGroup: —\n\n_Pick a group:_", w.Emoji, name), groupPickerKeyboard(h.groups()))
+	case "acc":
+		state.Step = StepCreateCurrency
+		return c.Send(fmt.Sprintf("💰 *New Account*\n\nEmoji: %s\nName: %s\nCurrency: —\n\n_Pick currency:_", w.Emoji, name), currencyKeyboard())
+	case "group":
+		g, err := h.Bot.Store.CreateGroup(h.DB, h.UID, name, w.Emoji)
+		if err != nil {
+			return h.send(respondError("Group already exists."))
+		}
+		h.Bot.clearState(h.UID)
+		return h.send(respondCreated(g.Emoji, g.Name, "group"))
+	}
+	return nil
+}
+
 
 func (b *Bot) receiveCatName(c tele.Context, state *userState) error {
 	name := strings.TrimSpace(c.Text())
 	if !isValidName(name) {
 		return c.Send("Name must be 1-100 characters.", cancelBtn())
 	}
-	state.Name = name
-	state.Step = StepAwaitCatGroup
+	w := state.creationW()
+	w.Name = name
+	state.Wizard = w
+	state.Step = StepCreateGroup
 
 	h := b.withCtx(c); defer h.done()
-	return c.Send(fmt.Sprintf("🏷️ *New Category*\n\nEmoji: %s\nName: %s\nGroup: —\n\n_Pick a group:_", state.Emoji, name), groupPickerKeyboard(h.groups()))
-}
-
-func (b *Bot) receiveAccName(c tele.Context, state *userState) error {
-	name := strings.TrimSpace(c.Text())
-	if !isValidName(name) {
-		return c.Send("Name must be 1-100 characters.", cancelBtn())
-	}
-	state.Name = name
-	state.Step = StepAwaitAccCurrency
-	return c.Send(fmt.Sprintf("💰 *New Account*\n\nEmoji: %s\nName: %s\nCurrency: —\n\n_Pick currency:_", state.Emoji, name), currencyKeyboard())
+	return c.Send(fmt.Sprintf("🏷️ *New Category*\n\nEmoji: %s\nName: %s\nGroup: —\n\n_Pick a group:_", w.Emoji, name), groupPickerKeyboard(h.groups()))
 }
 
 func (b *Bot) receiveGroupName(c tele.Context, state *userState) error {
@@ -165,8 +200,12 @@ func (b *Bot) receiveGroupName(c tele.Context, state *userState) error {
 	if !isValidName(name) {
 		return c.Send("Name must be 1-100 characters.", cancelBtn())
 	}
+	w := state.creationW()
+	w.Name = name
+	state.Wizard = w
+
 	h := b.withCtx(c); defer h.done()
-	g, err := h.Bot.Store.CreateGroup(h.DB, h.UID, name, state.Emoji)
+	g, err := h.Bot.Store.CreateGroup(h.DB, h.UID, name, w.Emoji)
 	if err != nil {
 		return h.send(respondError("Group already exists."))
 	}
@@ -174,7 +213,7 @@ func (b *Bot) receiveGroupName(c tele.Context, state *userState) error {
 	return h.send(respondCreated(g.Emoji, g.Name, "group"))
 }
 
-// ─── Picker callbacks ─────────────────────────────────────
+// ─── Picker callbacks (use variant access) ────────────────
 
 func (b *Bot) handleCurrencyPick(c tele.Context) error {
 	uid := c.Sender().ID
@@ -182,10 +221,12 @@ func (b *Bot) handleCurrencyPick(c tele.Context) error {
 	if state == nil {
 		return c.Respond(&tele.CallbackResponse{Text: "No active operation"})
 	}
+
+	w := state.creationW()
 	currency := c.Callback().Data
 
 	h := b.withCtx(c); defer h.done()
-	acc, err := h.Bot.Store.CreateAccount(h.DB, uid, state.Name, state.Emoji, currency, 0)
+	acc, err := h.Bot.Store.CreateAccount(h.DB, uid, w.Name, w.Emoji, currency, 0)
 	if err != nil {
 		return h.edit(respondError("Error creating account."), manageMenu())
 	}
@@ -199,16 +240,17 @@ func (b *Bot) handleIntervalPick(c tele.Context) error {
 	if state == nil {
 		return c.Respond(&tele.CallbackResponse{Text: "No active operation"})
 	}
-	interval := c.Callback().Data
-	d, m := parseInterval(interval)
+
+	w := state.budgetW()
+	d, m := parseInterval(c.Callback().Data)
 
 	h := b.withCtx(c); defer h.done()
-	bd, err := h.Bot.Store.SetBudget(h.DB, uid, state.EditingBudget, d, m, state.Amount)
+	bd, err := h.Bot.Store.SetBudget(h.DB, uid, w.CategoryID, d, m, w.Amount)
 	if err != nil {
 		return h.edit(respondError("Error saving budget."), manageMenu())
 	}
 	b.clearState(uid)
-	return h.edit(fmt.Sprintf("✅ Budget: %s *%.0f* (%s)", h.catName(state.EditingBudget), state.Amount, bd.Description()), manageMenu())
+	return h.edit(fmt.Sprintf("✅ Budget: %s *%.0f* (%s)", h.catName(w.CategoryID), w.Amount, bd.Description()), manageMenu())
 }
 
 func (b *Bot) handleGroupPick(c tele.Context) error {
@@ -218,15 +260,16 @@ func (b *Bot) handleGroupPick(c tele.Context) error {
 		return c.Respond(&tele.CallbackResponse{Text: "No active operation"})
 	}
 
+	w := state.creationW()
 	groupIDStr := c.Callback().Data
-	var groupID *int64
 	if groupIDStr != "0" {
 		id, _ := strconv.ParseInt(groupIDStr, 10, 64)
-		groupID = &id
+		w.CatGroup = &id
+		state.Wizard = w
 	}
 
 	h := b.withCtx(c); defer h.done()
-	cat, err := h.Bot.Store.CreateCategory(h.DB, uid, state.Name, state.Emoji, groupID)
+	cat, err := h.Bot.Store.CreateCategory(h.DB, uid, w.Name, w.Emoji, w.CatGroup)
 	if err != nil {
 		return h.edit(respondError("Category already exists."), manageMenu())
 	}

@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ynab-bot
+  namespace: default
+  labels:
+    app: ynab-bot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ynab-bot
+  template:
+    metadata:
+      labels:
+        app: ynab-bot
+    spec:
+      containers:
+        - name: bot
+          image: ghcr.io/andrii/ynab-bot:latest
+          imagePullPolicy: Always
+          env:
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ynab-bot-secret
+                  key: telegram-bot-token
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ynab-bot-secret
+                  key: database-url
+            - name: ALLOWED_TELEGRAM_ID
+              valueFrom:
+                secretKeyRef:
+                  name: ynab-bot-secret
+                  key: allowed-telegram-id
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+          livenessProbe:
+            exec:
+              command:
+                - pgrep
+                - ynab-bot
+            initialDelaySeconds: 10
+            periodSeconds: 30

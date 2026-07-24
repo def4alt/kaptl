@@ -194,7 +194,7 @@ func (d *DB) GetBudgetSummary(ctx context.Context, userID int64) ([]models.Categ
 		return nil, fmt.Errorf("get budget summary: %w", err)
 	}
 	defer rows.Close()
-	return pgx.CollectRows(rows, pgx.RowToStructByName[models.Category])
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[models.Category])
 }
 
 // GetBudgets returns all budgets for a user.

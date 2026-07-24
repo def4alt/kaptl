@@ -105,7 +105,7 @@ func (d *DB) GetCategories(ctx context.Context, userID int64) ([]models.Category
 		return nil, fmt.Errorf("get categories: %w", err)
 	}
 	defer rows.Close()
-	return pgx.CollectRows(rows, pgx.RowToStructByName[models.Category])
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[models.Category])
 }
 
 func (d *DB) DeleteCategory(ctx context.Context, categoryID int64) error {

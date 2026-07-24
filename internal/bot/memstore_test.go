@@ -83,7 +83,7 @@ func (m *memStore) GetAccounts(ctx context.Context, userID int64) ([]models.Acco
 					switch t.Type {
 					case "income":
 						balance += t.Amount
-					case "expense":
+					case "expense", "transfer":
 						balance -= t.Amount
 					}
 				}

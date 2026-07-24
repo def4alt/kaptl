@@ -523,6 +523,137 @@ func TestE2E(t *testing.T) {
 	}
 }
 
+func TestMoveCommand(t *testing.T) {
+	b, store := testBot(t)
+	store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 1000)
+	store.CreateAccount(nil, 303330553, "Cash", "💵", "EUR", 500)
+
+	processUpdate(b, textUpdate("/move 200 from Mono to Cash"))
+
+	txs, _ := store.GetRecentTransactions(nil, 303330553, 10)
+	if len(txs) != 1 {
+		t.Fatalf("expected 1 transaction, got %d", len(txs))
+	}
+	if txs[0].Type != "transfer" {
+		t.Errorf("expected 'transfer', got '%s'", txs[0].Type)
+	}
+	if txs[0].Amount != 200 {
+		t.Errorf("expected 200, got %.2f", txs[0].Amount)
+	}
+}
+
+func TestMoveCommandInvalid(t *testing.T) {
+	b, store := testBot(t)
+	store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 1000)
+
+	// Missing args
+	processUpdate(b, textUpdate("/move"))
+	// Wrong format
+	processUpdate(b, textUpdate("/move 500"))
+	// Negative amount
+	processUpdate(b, textUpdate("/move -100 from Mono to Cash"))
+	// Source = dest
+	store.CreateAccount(nil, 303330553, "Cash", "💵", "EUR", 500)
+	processUpdate(b, textUpdate("/move 100 from Mono to Mono"))
+
+	txs, _ := store.GetRecentTransactions(nil, 303330553, 10)
+	if len(txs) != 0 {
+		t.Errorf("expected 0 transfers, got %d", len(txs))
+	}
+}
+
+func TestMoveInteractive(t *testing.T) {
+	b, store := testBot(t)
+	store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 1000)
+	store.CreateAccount(nil, 303330553, "Cash", "💵", "EUR", 500)
+
+	// Tap 🔀 Move → pick source (Mono, id=1) → pick dest (Cash, id=2) → enter amount
+	processUpdate(b, staticCb("move"))
+	processUpdate(b, callbackUpdate("acc|1"))    // source
+	processUpdate(b, callbackUpdate("acc|2"))    // destination
+	processUpdate(b, textUpdate("300"))          // amount
+
+	txs, _ := store.GetRecentTransactions(nil, 303330553, 10)
+	if len(txs) != 1 || txs[0].Type != "transfer" || txs[0].Amount != 300 {
+		t.Fatalf("transfer failed: %+v", txs)
+	}
+}
+
+func TestMoveInteractiveCancel(t *testing.T) {
+	b, store := testBot(t)
+	store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 1000)
+	store.CreateAccount(nil, 303330553, "Cash", "💵", "EUR", 500)
+
+	// Tap 🔀 Move → pick source → cancel
+	processUpdate(b, staticCb("move"))
+	processUpdate(b, callbackUpdate("acc|1"))
+	processUpdate(b, callbackUpdate("cancel"))
+
+	txs, _ := store.GetRecentTransactions(nil, 303330553, 10)
+	if len(txs) != 0 {
+		t.Errorf("expected 0 transfers after cancel, got %d", len(txs))
+	}
+}
+
+func TestMoveNeedsTwoAccounts(t *testing.T) {
+	b, store := testBot(t)
+	store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 1000)
+
+	// Should warn that 2 accounts are needed
+	processUpdate(b, staticCb("move"))
+	// Nothing crashes, message sent
+}
+
+func TestMoveE2E(t *testing.T) {
+	b, store := testBot(t)
+	store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 1000)
+	store.CreateAccount(nil, 303330553, "Cash", "💵", "USD", 500)
+
+	// Interactive move: Mono → Cash, 400
+	processUpdate(b, staticCb("move"))
+	processUpdate(b, callbackUpdate("acc|1"))
+	processUpdate(b, callbackUpdate("acc|2"))
+	processUpdate(b, textUpdate("400"))
+
+	// Check balances
+	accs, _ := store.GetAccounts(nil, 303330553)
+	var mono, cash *models.Account
+	for i, a := range accs {
+		switch a.Name {
+		case "Mono":
+			mono = &accs[i]
+		case "Cash":
+			cash = &accs[i]
+		}
+	}
+
+	if mono.Balance != 600 {
+		t.Errorf("Mono balance: expected 600, got %.2f", mono.Balance)
+	}
+	if cash.Balance != 900 {
+		t.Errorf("Cash balance: expected 900, got %.2f", cash.Balance)
+	}
+
+	// Also test command: Cash → Mono, 200
+	processUpdate(b, textUpdate("/move 200 from Cash to Mono"))
+	accs, _ = store.GetAccounts(nil, 303330553)
+	for i, a := range accs {
+		switch a.Name {
+		case "Mono":
+			mono = &accs[i]
+		case "Cash":
+			cash = &accs[i]
+		}
+	}
+
+	if mono.Balance != 800 {
+		t.Errorf("Mono balance after cmd: expected 800, got %.2f", mono.Balance)
+	}
+	if cash.Balance != 700 {
+		t.Errorf("Cash balance after cmd: expected 700, got %.2f", cash.Balance)
+	}
+}
+
 func TestDebugCatAdd(t *testing.T) {
 	b, store := testBot(t)
 	u := textUpdate("/cat add 🍞 Groceries")

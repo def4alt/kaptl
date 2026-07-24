@@ -17,12 +17,13 @@ import (
 // ─── Wizard state (conversation-like step tracking) ──────
 
 type userState struct {
-	Step          string // "awaiting_amount", "awaiting_account", etc.
+	Step          string // "awaiting_amount", "awaiting_account", "awaiting_move_target", etc.
 	CategoryID    int64
-	AccountID     int64
+	AccountID     int64  // source account for moves, or expense/income account
+	TargetAccountID int64 // destination account for moves
 	Amount        float64
 	Description   string
-	TxType        string // "expense" or "income"
+	TxType        string // "expense", "income", or "transfer"
 	EditingBudget int64  // category ID when setting budget
 }
 
@@ -135,6 +136,7 @@ func (b *Bot) registerCommands() {
 		{Text: "cat", Description: "/cat add 🍞 Name | /cat rm Name | /cat list"},
 		{Text: "acc", Description: "/acc add 💳 Name [currency] | /acc list"},
 		{Text: "budget", Description: "/budget set CategoryName amount"},
+		{Text: "move", Description: "/move amount from Account to Account"},
 	}
 	if err := b.Tele.SetCommands(cmds); err != nil {
 		log.Printf("register commands: %v", err)
@@ -153,10 +155,12 @@ func (b *Bot) registerHandlers() {
 	b.Tele.Handle("/cat", b.handleCat)
 	b.Tele.Handle("/acc", b.handleAcc)
 	b.Tele.Handle("/budget", b.handleBudget)
+	b.Tele.Handle("/move", b.handleMove)
 
 	// Callback buttons (inline keyboard)
 	b.Tele.Handle(&btnAddExpense, b.handleAddExpense)
 	b.Tele.Handle(&btnAddIncome, b.handleAddIncome)
+	b.Tele.Handle(&btnMove, b.handleMoveBtn)
 	b.Tele.Handle(&btnSummary, b.handleSummary)
 	b.Tele.Handle(&btnAccounts, b.handleAccounts)
 	b.Tele.Handle(&btnCategories, b.handleCategories)
@@ -186,6 +190,7 @@ func (b *Bot) handleHelp(c tele.Context) error {
 /acc add 💳 Name [currency] – Create account
 /acc list – List accounts
 /budget set Name amount – Set monthly budget
+/move amount from Account to Account – Transfer between accounts
 
 *Quick expense:*
 Tap "➕ Expense" → pick category → type amount → pick account → done!
@@ -374,6 +379,88 @@ func (b *Bot) handleAddIncome(c tele.Context) error {
 	return c.Send("*Enter the income amount:*\n\nJust type a number, e.g. `1500`", cancelBtn())
 }
 
+// ─── Move / Transfer between accounts ──────────────────────
+
+// handleMove is the /move slash command: /move 500 from Mono to Cash
+func (b *Bot) handleMove(c tele.Context) error {
+	userID := c.Sender().ID
+	text := strings.TrimSpace(c.Message().Payload)
+
+	// Try parsing: "500 from Mono to Cash"
+	parts := strings.Fields(text)
+	if len(parts) < 5 || strings.ToLower(parts[1]) != "from" || strings.ToLower(parts[3]) != "to" {
+		return c.Send("Usage: `/move <amount> from <Account> to <Account>`\n\nExample: `/move 500 from Mono to Cash`\n\nOr tap *🔀 Move* for interactive mode.", mainMenu())
+	}
+
+	amount, err := strconv.ParseFloat(parts[0], 64)
+	if err != nil || amount <= 0 {
+		return c.Send("❌ Invalid amount. Use a positive number, e.g. `500`", mainMenu())
+	}
+
+	fromName := parts[2]
+	toName := parts[4]
+
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	accs, err := b.Store.GetAccounts(ctx, userID)
+	if err != nil {
+		log.Printf("get accounts for move: %v", err)
+		return c.Send("Error loading accounts", mainMenu())
+	}
+
+	var from, to *models.Account
+	for i, a := range accs {
+		if strings.EqualFold(a.Name, fromName) {
+			from = &accs[i]
+		}
+		if strings.EqualFold(a.Name, toName) {
+			to = &accs[i]
+		}
+	}
+
+	if from == nil {
+		return c.Send(fmt.Sprintf("❌ Account *%s* not found.", fromName), mainMenu())
+	}
+	if to == nil {
+		return c.Send(fmt.Sprintf("❌ Account *%s* not found.", toName), mainMenu())
+	}
+	if from.ID == to.ID {
+		return c.Send("❌ Source and destination must be different accounts.", mainMenu())
+	}
+
+	tx, err := b.Store.CreateTransaction(ctx, userID, from.ID, nil, "transfer", amount, &to.ID, fmt.Sprintf("→ %s", to.Name))
+	if err != nil {
+		log.Printf("create transfer: %v", err)
+		return c.Send("❌ Error creating transfer.", mainMenu())
+	}
+
+	return c.Send(fmt.Sprintf("✅ Transferred *%.2f* %s\n%s %s → %s %s\n_%s_",
+		amount, from.Currency,
+		from.Emoji, from.Name,
+		to.Emoji, to.Name,
+		tx.CreatedAt.Format("Jan 2 15:04")), mainMenu())
+}
+
+// handleMoveBtn starts the interactive move wizard.
+func (b *Bot) handleMoveBtn(c tele.Context) error {
+	userID := c.Sender().ID
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	accs, err := b.Store.GetAccounts(ctx, userID)
+	if err != nil {
+		log.Printf("get accounts for move btn: %v", err)
+		return c.Send("Error loading accounts", mainMenu())
+	}
+	if len(accs) < 2 {
+		return c.Send("Need at least 2 accounts to transfer. Use `/acc add 💳 Name` first.", mainMenu())
+	}
+
+	b.setState(userID, &userState{Step: "awaiting_move_source", TxType: "transfer"})
+	return c.Edit("*From which account?*", accountKeyboard(accs))
+}
+
 // ─── Summary ──────────────────────────────────────────────
 
 func (b *Bot) handleSummary(c tele.Context) error {
@@ -521,6 +608,9 @@ func (b *Bot) handleRecent(c tele.Context) error {
 			sign = "↔️"
 		}
 		line := fmt.Sprintf("%s *%.2f* — %s", sign, t.Amount, t.AccountName)
+		if t.Type == "transfer" && t.Description != "" {
+			line += " " + t.Description
+		}
 		if t.CategoryEmoji != "" && t.CategoryName != "" {
 			line += fmt.Sprintf(" | %s %s", t.CategoryEmoji, t.CategoryName)
 		}
@@ -560,6 +650,8 @@ func (b *Bot) handleText(c tele.Context) error {
 		return b.receiveIncomeAccount(c, state)
 	case "awaiting_budget_amount":
 		return b.receiveBudgetAmount(c, state)
+	case "awaiting_move_amount":
+		return b.receiveMoveAmount(c, state)
 	}
 
 	return nil
@@ -675,6 +767,40 @@ func (b *Bot) receiveIncomeAccount(c tele.Context, state *userState) error {
 	msg := fmt.Sprintf("✅ Income: +*%.2f* on *%s*\n_%s_",
 		tx.Amount, acc.Name, tx.CreatedAt.Format("Jan 2 15:04"))
 	return c.Send(msg, mainMenu())
+}
+
+// ─── Step: receive move amount ────────────────────────────
+
+func (b *Bot) receiveMoveAmount(c tele.Context, state *userState) error {
+	amount, err := strconv.ParseFloat(strings.TrimSpace(c.Text()), 64)
+	if err != nil || amount <= 0 {
+		return c.Send("Please enter a valid number, e.g. `500`", cancelBtn())
+	}
+
+	userID := c.Sender().ID
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
+	defer cancel()
+
+	srcAcc, _ := b.Store.GetAccount(ctx, state.AccountID)
+	dstAcc, _ := b.Store.GetAccount(ctx, state.TargetAccountID)
+	if srcAcc == nil || dstAcc == nil {
+		b.clearState(userID)
+		return c.Send("❌ Account not found. Start over.", mainMenu())
+	}
+
+	tx, err := b.Store.CreateTransaction(ctx, userID, state.AccountID, nil, "transfer", amount, &state.TargetAccountID, fmt.Sprintf("→ %s", dstAcc.Name))
+	if err != nil {
+		log.Printf("create transfer: %v", err)
+		b.clearState(userID)
+		return c.Send("❌ Error creating transfer.", mainMenu())
+	}
+
+	b.clearState(userID)
+	return c.Send(fmt.Sprintf("✅ Transferred *%.2f* %s\n%s %s → %s %s\n_%s_",
+		amount, srcAcc.Currency,
+		srcAcc.Emoji, srcAcc.Name,
+		dstAcc.Emoji, dstAcc.Name,
+		tx.CreatedAt.Format("Jan 2 15:04")), mainMenu())
 }
 
 // ─── Step: receive budget amount ─────────────────────────
@@ -811,6 +937,34 @@ func (b *Bot) handleCallback(c tele.Context) error {
 
 			return c.Edit(fmt.Sprintf("✅ Income: +*%.2f* on *%s*\n_%s_",
 				tx.Amount, acc.Name, tx.CreatedAt.Format("Jan 2 15:04")), mainMenu())
+
+		case "transfer":
+			switch state.Step {
+			case "awaiting_move_source":
+				// Record source, show destination picker
+				state.Step = "awaiting_move_target"
+				state.AccountID = acc.ID
+				accs, _ := b.Store.GetAccounts(ctx, userID)
+				return c.Edit(
+					fmt.Sprintf("*From:* %s %s\n\n*To which account?*", acc.Emoji, acc.Name),
+					accountKeyboardExclude(accs, acc.ID),
+				)
+
+			case "awaiting_move_target":
+				// Record destination, ask for amount
+				state.Step = "awaiting_move_amount"
+				state.TargetAccountID = acc.ID
+				destAcc := acc
+				srcAcc, _ := b.Store.GetAccount(ctx, state.AccountID)
+				srcName := "Unknown"
+				if srcAcc != nil {
+					srcName = fmt.Sprintf("%s %s", srcAcc.Emoji, srcAcc.Name)
+				}
+				return c.Edit(
+					fmt.Sprintf("*From:* %s\n*To:* %s %s\n\n*Enter the amount to transfer:*", srcName, destAcc.Emoji, destAcc.Name),
+					cancelBtn(),
+				)
+			}
 		}
 
 		return c.Respond(&tele.CallbackResponse{Text: "Done!"})

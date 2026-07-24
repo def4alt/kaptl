@@ -14,6 +14,7 @@ import (
 var (
 	btnAddExpense = tele.Btn{Unique: "add_expense", Text: "➕ Expense"}
 	btnAddIncome  = tele.Btn{Unique: "add_income", Text: "💵 Income"}
+	btnMove       = tele.Btn{Unique: "move", Text: "🔀 Move"}
 	btnSummary    = tele.Btn{Unique: "summary", Text: "📊 Summary"}
 	btnAccounts   = tele.Btn{Unique: "accounts", Text: "💰 Accounts"}
 	btnCategories = tele.Btn{Unique: "categories", Text: "🏷️ Categories"}
@@ -102,6 +103,28 @@ func accountKeyboard(accs []models.Account) *tele.ReplyMarkup {
 	return menu
 }
 
+// ─── Account selection keyboard (excluding one account) ────
+
+func accountKeyboardExclude(accs []models.Account, excludeID int64) *tele.ReplyMarkup {
+	menu := &tele.ReplyMarkup{}
+	var rows []tele.Row
+
+	for _, a := range accs {
+		if a.ID == excludeID {
+			continue
+		}
+		btn := menu.Data(
+			fmt.Sprintf("%s %s", a.Emoji, a.Name),
+			callbackData(cbAcc, a.ID),
+		)
+		rows = append(rows, menu.Row(btn))
+	}
+
+	rows = append(rows, menu.Row(cancelDataBtn(menu)))
+	menu.Inline(rows...)
+	return menu
+}
+
 // ─── Cancel button (as data, not static Btn) ──────────────
 
 func cancelDataBtn(menu *tele.ReplyMarkup) tele.Btn {
@@ -114,6 +137,7 @@ func mainMenu() *tele.ReplyMarkup {
 	menu := &tele.ReplyMarkup{}
 	menu.Inline(
 		menu.Row(btnAddExpense, btnAddIncome),
+		menu.Row(btnMove),
 		menu.Row(btnSummary, btnBudgets),
 		menu.Row(btnAccounts, btnCategories),
 		menu.Row(btnRecent),

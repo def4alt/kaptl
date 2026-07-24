@@ -1,6 +1,7 @@
 package models
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -61,10 +62,28 @@ type Transaction struct {
 }
 
 type Budget struct {
-	ID         int64     `json:"id"`
-	UserID     int64     `json:"user_id"`
-	CategoryID int64     `json:"category_id"`
-	Month      string    `json:"month"` // "2026-07"
-	Amount     float64   `json:"amount"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID             int64     `json:"id"`
+	UserID         int64     `json:"user_id"`
+	CategoryID     int64     `json:"category_id"`
+	PeriodStart    time.Time `json:"period_start"`
+	IntervalDays   int       `json:"interval_days"`   // 7=weekly, 14=biweekly, 0 for monthly+
+	IntervalMonths int       `json:"interval_months"` // 1=monthly, 3=quarterly, 0 for day-based
+	Amount         float64   `json:"amount"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// Description returns a human-readable interval label.
+func (b Budget) Description() string {
+	switch {
+	case b.IntervalMonths >= 3:
+		return fmt.Sprintf("every %d months", b.IntervalMonths)
+	case b.IntervalMonths == 1:
+		return "monthly"
+	case b.IntervalDays >= 14:
+		return fmt.Sprintf("every %d days", b.IntervalDays)
+	case b.IntervalDays == 7:
+		return "weekly"
+	default:
+		return fmt.Sprintf("every %d days", b.IntervalDays)
+	}
 }

@@ -7,7 +7,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/def4alt/kaptl/internal/models"
 	tele "gopkg.in/telebot.v4"
@@ -367,8 +366,7 @@ func TestSummaryWithData(t *testing.T) {
 	store.CreateCategory(nil, 303330553, "Food", "🍞")
 	store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 0)
 
-	month := time.Now().Format("2006-01") + "-01"
-	store.SetBudget(nil, 303330553, 1, month, 5000)
+	store.SetBudget(nil, 303330553, 1, 0, 1, 5000)
 	store.CreateTransaction(nil, 303330553, 1, intPtr(1), "expense", 2500, nil, "lunch")
 
 	processUpdate(b, staticCb("summary"))
@@ -428,8 +426,25 @@ func TestE2E(t *testing.T) {
 	catID := cats[0].ID
 	t.Logf("  ✅ Category: %s %s (id=%d)", cats[0].Emoji, cats[0].Name, catID)
 
-	// 3. Add income
-	t.Log("Step 3: Add income")
+	// 3. Set budget first
+	t.Log("Step 3: Set budget")
+	processUpdate(b, textUpdate("/budget set Groceries 3000"))
+
+	budgets, _ := store.GetBudgets(nil, 303330553)
+	found := false
+	for _, bd := range budgets {
+		if bd.CategoryID == catID && bd.Amount == 3000 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("budget not found: %+v", budgets)
+	}
+	t.Logf("  ✅ Budget set: Groceries = 3000/month")
+
+	// 4. Add income
+	t.Log("Step 4: Add income")
 	processUpdate(b, staticCb("add_income"))
 	processUpdate(b, textUpdate("5000"))
 	processUpdate(b, staticCb(fmt.Sprintf("acc|%d", accID)))
@@ -440,13 +455,12 @@ func TestE2E(t *testing.T) {
 	}
 	t.Logf("  ✅ Income: +%.2f on %s", txs[0].Amount, txs[0].AccountName)
 
-	// 4. Add expenses
-	t.Log("Step 4: Add expenses")
+	// 5. Add expenses
+	t.Log("Step 5: Add expenses")
 	processUpdate(b, staticCb(fmt.Sprintf("cat|%d", catID)))
 	processUpdate(b, textUpdate("42.50"))
 	processUpdate(b, staticCb(fmt.Sprintf("acc|%d", accID)))
 
-	// Add another expense
 	processUpdate(b, staticCb(fmt.Sprintf("cat|%d", catID)))
 	processUpdate(b, textUpdate("18.90"))
 	processUpdate(b, staticCb(fmt.Sprintf("acc|%d", accID)))
@@ -462,24 +476,6 @@ func TestE2E(t *testing.T) {
 		}
 	}
 	t.Logf("  ✅ Expenses logged: %d transactions, total spend: %.2f", len(txs)-1, totalExp)
-
-	// 5. Set budget
-	t.Log("Step 5: Set budget")
-	processUpdate(b, textUpdate(fmt.Sprintf("/budget set Groceries 3000")))
-
-	month := time.Now().Format("2006-01") + "-01"
-	budgets, _ := store.GetBudgets(nil, 303330553)
-	found := false
-	for _, bd := range budgets {
-		if bd.CategoryID == catID && bd.Month == month && bd.Amount == 3000 {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("budget not found: %+v", budgets)
-	}
-	t.Logf("  ✅ Budget set: Groceries = 3000/month")
 
 	// 6. View summary
 	t.Log("Step 6: View summary")

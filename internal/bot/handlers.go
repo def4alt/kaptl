@@ -135,7 +135,7 @@ func (b *Bot) registerCommands() {
 		{Text: "help", Description: "show help"},
 		{Text: "cat", Description: "/cat add 🍞 Name | /cat rm Name | /cat list"},
 		{Text: "acc", Description: "/acc add 💳 Name [currency] | /acc list"},
-		{Text: "budget", Description: "/budget set CategoryName amount"},
+		{Text: "budget", Description: "/budget set Name amount [weekly|monthly|quarterly]"},
 		{Text: "move", Description: "/move amount from Account to Account"},
 	}
 	if err := b.Tele.SetCommands(cmds); err != nil {
@@ -194,7 +194,7 @@ func (b *Bot) handleHelp(c tele.Context) error {
 /cat list – List categories
 /acc add 💳 Name [currency] – Create account
 /acc list – List accounts
-/budget set Name amount – Set monthly budget
+/budget set Name amount [interval] – Set recurring budget
 /move amount from Account to Account – Transfer between accounts
 
 *Quick expense:*
@@ -333,32 +333,71 @@ func (b *Bot) handleBudget(c tele.Context) error {
 		return nil
 	}
 
-	// /budget set Groceries 5000
-	// Last arg is amount, everything before is category name
+	// /budget set Groceries 5000 [interval]
+	// interval: weekly, biweekly, monthly (default), quarterly, or Nd (e.g. 7d, 30d)
 	if len(args) < 3 {
-		return c.Send("Usage: `/budget set CategoryName amount`\nExample: `/budget set Groceries 5000`", mainMenu())
+		return c.Send("Usage: `/budget set Name amount [interval]`\nExample: `/budget set Groceries 5000 monthly`\n\nIntervals: weekly, biweekly, monthly, quarterly, or 30d", mainMenu())
 	}
 
-	amount, err := strconv.ParseFloat(args[len(args)-1], 64)
+	// Parse amount (last or second-to-last arg)
+	amountIdx := len(args) - 1
+	intervalDays, intervalMonths := defaultInterval()
+	if len(args) >= 4 {
+		intervalDays, intervalMonths = parseInterval(args[len(args)-1])
+		if intervalDays == 0 && intervalMonths == 0 {
+			// Last arg might be the amount, try second-to-last as interval
+			intervalDays, intervalMonths = parseInterval(args[len(args)-1])
+			if intervalDays == 0 && intervalMonths == 0 {
+				amountIdx = len(args) - 1
+			}
+		} else {
+			amountIdx = len(args) - 2
+		}
+	}
+
+	amount, err := strconv.ParseFloat(args[amountIdx], 64)
 	if err != nil || amount < 0 {
 		return c.Send("Amount must be a number, e.g. `5000`", mainMenu())
 	}
 
-	catName := strings.Join(args[1:len(args)-1], " ")
+	catName := strings.Join(args[1:amountIdx], " ")
 
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 	cats, _ := b.Store.GetCategories(ctx, c.Sender().ID)
 	for _, cat := range cats {
 		if strings.EqualFold(cat.Name, catName) {
-			month := time.Now().Format("2006-01") + "-01"
-			_, err := b.Store.SetBudget(ctx, c.Sender().ID, cat.ID, month, amount)
+			bd, err := b.Store.SetBudget(ctx, c.Sender().ID, cat.ID, intervalDays, intervalMonths, amount)
 			if err != nil {
 				return c.Send("❌ Error setting budget.", mainMenu())
 			}
-			return c.Send(fmt.Sprintf("✅ Budget for %s *%s*: *%.0f*/month", cat.Emoji, cat.Name, amount), mainMenu())
+			return c.Send(fmt.Sprintf("✅ Budget for %s *%s*: *%.0f* (%s)\n_Next reset: %s_",
+				cat.Emoji, cat.Name, amount, bd.Description(),
+				bd.PeriodStart.AddDate(0, bd.IntervalMonths, bd.IntervalDays).Format("Jan 2")), mainMenu())
 		}
 	}
 	return c.Send(fmt.Sprintf("Category *%s* not found.", catName), mainMenu())
+}
+
+func defaultInterval() (int, int) { return 0, 1 } // monthly
+func parseInterval(s string) (int, int) {
+	switch strings.ToLower(s) {
+	case "weekly":
+		return 7, 0
+	case "biweekly":
+		return 14, 0
+	case "monthly":
+		return 0, 1
+	case "quarterly":
+		return 0, 3
+	default:
+		// Try Nd format: "7d", "30d"
+		if strings.HasSuffix(s, "d") {
+			if d, err := strconv.Atoi(strings.TrimSuffix(s, "d")); err == nil && d > 0 {
+				return d, 0
+			}
+		}
+		return 0, 0
+	}
 }
 
 // ─── Add Expense ──────────────────────────────────────────
@@ -561,25 +600,22 @@ func (b *Bot) handleBudgetMenu(c tele.Context) error {
 	}
 
 	budgets, _ := b.Store.GetBudgets(ctx, userID)
-	month := time.Now().Format("2006-01")
 
-	budgetMap := make(map[int64]float64)
-	for _, bd := range budgets {
-		if bd.Month == month+"-01" {
-			budgetMap[bd.CategoryID] = bd.Amount
-		}
+	budgetMap := make(map[int64]*models.Budget)
+	for i, bd := range budgets {
+		budgetMap[bd.CategoryID] = &budgets[i]
 	}
 
 	var lines []string
 	for _, cat := range cats {
-		amount := budgetMap[cat.ID]
-		if amount > 0 {
-			lines = append(lines, fmt.Sprintf("%s %s: *%.0f*", cat.Emoji, cat.Name, amount))
+		if bd, ok := budgetMap[cat.ID]; ok {
+			lines = append(lines, fmt.Sprintf("%s %s: *%.0f* (%s)",
+				cat.Emoji, cat.Name, bd.Amount, bd.Description()))
 		}
 	}
 
 	if len(lines) == 0 {
-		lines = append(lines, "_No budgets set for this month_")
+		lines = append(lines, "_No budgets set_")
 	}
 
 	msg := "🎯 *Monthly Budgets*\n\n" + strings.Join(lines, "\n")
@@ -817,9 +853,9 @@ func (b *Bot) receiveBudgetAmount(c tele.Context, state *userState) error {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
-	month := time.Now().Format("2006-01") + "-01"
+	intervalDays, intervalMonths := defaultInterval() // monthly default for interactive
 
-	_, err = b.Store.SetBudget(ctx, c.Sender().ID, state.EditingBudget, month, amount)
+	_, err = b.Store.SetBudget(ctx, c.Sender().ID, state.EditingBudget, intervalDays, intervalMonths, amount)
 	if err != nil {
 		log.Printf("set budget: %v", err)
 		return c.Send("❌ Error saving budget. Try again.", mainMenu())
@@ -836,7 +872,7 @@ func (b *Bot) receiveBudgetAmount(c tele.Context, state *userState) error {
 		}
 	}
 
-	return c.Send(fmt.Sprintf("✅ Budget for *%s*: *%.0f* this month", catName, amount), mainMenu())
+	return c.Send(fmt.Sprintf("✅ Budget for *%s*: *%.0f* (monthly)", catName, amount), mainMenu())
 }
 
 // ─── Dynamic callback handlers (registered per prefix) ─────

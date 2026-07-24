@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/def4alt/kaptl/internal/models"
 	"github.com/jackc/pgx/v5"
@@ -152,16 +151,18 @@ func (d *DB) GetRecentTransactions(ctx context.Context, userID int64, limit int)
 
 // ─── Budgets ──────────────────────────────────────────────
 
-func (d *DB) SetBudget(ctx context.Context, userID int64, categoryID int64, month string, amount float64) (*models.Budget, error) {
+func (d *DB) SetBudget(ctx context.Context, userID int64, categoryID int64, intervalDays, intervalMonths int, amount float64) (*models.Budget, error) {
 	b := &models.Budget{}
 	err := d.Pool.QueryRow(ctx, `
-		INSERT INTO budgets (user_id, category_id, month, amount)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (user_id, category_id, month) DO UPDATE
-			SET amount = EXCLUDED.amount
-		RETURNING id, user_id, category_id, month, amount, created_at
-	`, userID, categoryID, month, amount).Scan(
-		&b.ID, &b.UserID, &b.CategoryID, &b.Month, &b.Amount, &b.CreatedAt,
+		INSERT INTO budgets (user_id, category_id, period_start, interval_days, interval_months, amount)
+		VALUES ($1, $2, NOW(), $3, $4, $5)
+		ON CONFLICT (user_id, category_id) DO UPDATE
+			SET interval_days   = EXCLUDED.interval_days,
+			    interval_months = EXCLUDED.interval_months,
+			    amount         = EXCLUDED.amount
+		RETURNING id, user_id, category_id, period_start, interval_days, interval_months, amount, created_at
+	`, userID, categoryID, intervalDays, intervalMonths, amount).Scan(
+		&b.ID, &b.UserID, &b.CategoryID, &b.PeriodStart, &b.IntervalDays, &b.IntervalMonths, &b.Amount, &b.CreatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("set budget: %w", err)
@@ -169,27 +170,25 @@ func (d *DB) SetBudget(ctx context.Context, userID int64, categoryID int64, mont
 	return b, nil
 }
 
-// GetBudgetSummary returns categories with spent/budget/remaining for current month.
+// GetBudgetSummary returns categories with spent/budget/remaining for the current period.
+// Each budget's period_start is advanced if the interval has elapsed.
 func (d *DB) GetBudgetSummary(ctx context.Context, userID int64) ([]models.BudgetRow, error) {
-	month := time.Now().Format("2006-01") + "-01"
 	rows, err := d.Pool.Query(ctx, `
 		SELECT
 			c.id, c.user_id, c.name, c.emoji, c.created_at,
-			COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount ELSE 0 END), 0) AS spent,
+			COALESCE(SUM(CASE WHEN t2.type = 'expense' THEN t2.amount ELSE 0 END), 0) AS spent,
 			COALESCE(b.amount, 0) AS budget,
-			COALESCE(b.amount, 0) - COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount ELSE 0 END), 0) AS remaining
+			COALESCE(b.amount, 0) - COALESCE(SUM(CASE WHEN t2.type = 'expense' THEN t2.amount ELSE 0 END), 0) AS remaining
 		FROM categories c
-		LEFT JOIN transactions t ON t.category_id = c.id
-			AND t.user_id = $1
-			AND t.type = 'expense'
-			AND DATE_TRUNC('month', t.created_at) = DATE_TRUNC('month', $2::date)
-		LEFT JOIN budgets b ON b.category_id = c.id
-			AND b.user_id = $1
-			AND b.month = $2::date
+		LEFT JOIN budgets b ON b.category_id = c.id AND b.user_id = $1
+		LEFT JOIN transactions t2 ON t2.category_id = c.id
+			AND t2.user_id = $1
+			AND t2.type = 'expense'
+			AND t2.created_at >= COALESCE(b.period_start, '1970-01-01'::timestamptz)
 		WHERE c.user_id = $1
 		GROUP BY c.id, b.amount
 		ORDER BY c.name
-	`, userID, month)
+	`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("get budget summary: %w", err)
 	}
@@ -200,10 +199,10 @@ func (d *DB) GetBudgetSummary(ctx context.Context, userID int64) ([]models.Budge
 // GetBudgets returns all budgets for a user.
 func (d *DB) GetBudgets(ctx context.Context, userID int64) ([]models.Budget, error) {
 	rows, err := d.Pool.Query(ctx, `
-		SELECT b.id, b.user_id, b.category_id, b.month, b.amount, b.created_at
+		SELECT b.id, b.user_id, b.category_id, b.period_start, b.interval_days, b.interval_months, b.amount, b.created_at
 		FROM budgets b
 		WHERE b.user_id = $1
-		ORDER BY b.month DESC
+		ORDER BY b.category_id
 	`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("get budgets: %w", err)

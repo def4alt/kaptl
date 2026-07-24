@@ -196,22 +196,27 @@ func (m *memStore) GetRecentTransactions(ctx context.Context, userID int64, limi
 	return result, nil
 }
 
-func (m *memStore) SetBudget(ctx context.Context, userID int64, categoryID int64, month string, amount float64) (*models.Budget, error) {
+func (m *memStore) SetBudget(ctx context.Context, userID int64, categoryID int64, intervalDays, intervalMonths int, amount float64) (*models.Budget, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := fmt.Sprintf("%d|%d|%s", userID, categoryID, month)
+	key := fmt.Sprintf("%d|%d", userID, categoryID)
 	if b, ok := m.budgets[key]; ok {
+		b.IntervalDays = intervalDays
+		b.IntervalMonths = intervalMonths
 		b.Amount = amount
+		b.PeriodStart = time.Now()
 		return b, nil
 	}
 	m.nextBudgetID++
 	b := &models.Budget{
-		ID:         m.nextBudgetID,
-		UserID:     userID,
-		CategoryID: categoryID,
-		Month:      month,
-		Amount:     amount,
-		CreatedAt:  time.Now(),
+		ID:             m.nextBudgetID,
+		UserID:         userID,
+		CategoryID:     categoryID,
+		PeriodStart:    time.Now(),
+		IntervalDays:   intervalDays,
+		IntervalMonths: intervalMonths,
+		Amount:         amount,
+		CreatedAt:      time.Now(),
 	}
 	m.budgets[key] = b
 	return b, nil
@@ -221,7 +226,6 @@ func (m *memStore) GetBudgetSummary(ctx context.Context, userID int64) ([]models
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	month := time.Now().Format("2006-01") + "-01"
 	var result []models.BudgetRow
 
 	for _, c := range m.categories {
@@ -235,15 +239,17 @@ func (m *memStore) GetBudgetSummary(ctx context.Context, userID int64) ([]models
 			Emoji:     c.Emoji,
 			CreatedAt: c.CreatedAt,
 		}
-		for _, t := range m.transactions {
-			if t.UserID == userID && t.CategoryID != nil && *t.CategoryID == c.ID &&
-				t.Type == "expense" && t.CreatedAt.Format("2006-01") == month[:7] {
-				row.Spent += t.Amount
+		// Find budget for this category
+		key := fmt.Sprintf("%d|%d", userID, c.ID)
+		if bd, ok := m.budgets[key]; ok {
+			row.Budget = bd.Amount
+			// Sum expenses since period_start
+			for _, t := range m.transactions {
+				if t.UserID == userID && t.CategoryID != nil && *t.CategoryID == c.ID &&
+					t.Type == "expense" && t.CreatedAt.After(bd.PeriodStart) {
+					row.Spent += t.Amount
+				}
 			}
-		}
-		key := fmt.Sprintf("%d|%d|%s", userID, c.ID, month)
-		if b, ok := m.budgets[key]; ok {
-			row.Budget = b.Amount
 		}
 		row.Remaining = row.Budget - row.Spent
 		result = append(result, row)

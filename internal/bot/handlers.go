@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"github.com/def4alt/kaptl/internal/bot/view"
 	tele "gopkg.in/telebot.v4"
 )
 
@@ -52,9 +53,12 @@ func RegisterHandlers(tb *tele.Bot, b *Bot) {
 
 func (b *Bot) handleStart(c tele.Context) error {
 	b.clearState(c.Sender().ID)
-	return c.Send(msgWelcome(), mainMenu())
+	if c.Callback() != nil {
+		return c.Edit(view.Welcome(), mainMenu())
+	}
+	return c.Send(view.Welcome(), mainMenu())
 }
 
 func (b *Bot) handleHelp(c tele.Context) error {
-	return c.Send(msgHelp(), mainMenu())
+	return c.Send(view.Help(), mainMenu())
 }

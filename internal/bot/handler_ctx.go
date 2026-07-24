@@ -40,9 +40,16 @@ func (h *hctx) send(text string) error {
 	return h.C.Send(text, mainMenu())
 }
 
-// edit is a shorthand for editing the current callback message.
 func (h *hctx) edit(text string, markup *tele.ReplyMarkup) error {
 	return h.C.Edit(text, markup)
+}
+
+// reply auto-detects: edits if callback, sends if slash command.
+func (h *hctx) reply(text string, markup *tele.ReplyMarkup) error {
+	if h.C.Callback() != nil {
+		return h.C.Edit(text, markup)
+	}
+	return h.C.Send(text, markup)
 }
 
 // ─── Entity accessors ─────────────────────────────────────

@@ -53,22 +53,25 @@ func (b *Bot) handleSummary(c tele.Context) error {
 	h := b.withCtx(c); defer h.done()
 	rows, _ := h.Bot.Store.GetBudgetSummary(h.DB, h.UID, 0)
 	if len(rows) == 0 {
-		return h.send("No categories yet. Use `/cat add 🍞 Name`.")
+		return c.Edit("No categories yet. Use `/cat add 🍞 Name`.", mainMenu())
 	}
 	rta, _ := h.Bot.Store.GetReadyToAssign(h.DB, h.UID)
-	return h.send(view.Summary(rows, rta))
+	return c.Edit(view.Summary(rows, rta), mainMenu())
 }
 
 func (b *Bot) handleRecent(c tele.Context) error {
 	h := b.withCtx(c); defer h.done()
 	txs, _ := h.Bot.Store.GetRecentTransactions(h.DB, h.UID, 10)
-	return h.send(msgRecent(txs))
+	return c.Edit(msgRecent(txs), mainMenu())
 }
 
 // ─── Cancel ───────────────────────────────────────────────
 
 func (b *Bot) handleCancel(c tele.Context) error {
 	b.clearState(c.Sender().ID)
+	if c.Callback() != nil {
+		return c.Edit("❌ Cancelled.", mainMenu())
+	}
 	return c.Send("❌ Cancelled.", mainMenu())
 }
 

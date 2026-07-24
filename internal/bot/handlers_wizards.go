@@ -17,9 +17,9 @@ func (b *Bot) handleAddExpense(c tele.Context) error {
 	defer cancel()
 	cats, _ := b.Store.GetCategories(ctx, c.Sender().ID)
 	if len(cats) == 0 {
-		return c.Send("No categories yet! Use `/cat add 🍞 Name` to create one.", mainMenu())
+		return c.Edit("No categories yet! Use `/cat add 🍞 Name`.", mainMenu())
 	}
-	return c.Send("*Pick a category:*", categoryKeyboard(cats))
+	return c.Edit("*Pick a category:*", categoryKeyboard(cats))
 }
 
 func (b *Bot) handleCatPick(c tele.Context) error {
@@ -114,7 +114,7 @@ func (b *Bot) handleMoveBtn(c tele.Context) error {
 	defer cancel()
 	accs, _ := b.Store.GetAccounts(ctx, c.Sender().ID)
 	if len(accs) < 2 {
-		return c.Send("Need at least 2 accounts. Use `/acc add 💳 Name`.", mainMenu())
+		return c.Edit("Need at least 2 accounts. Use `/acc add 💳 Name`.", mainMenu())
 	}
 
 	b.setState(c.Sender().ID, &userState{
@@ -167,10 +167,10 @@ func (b *Bot) handleBudgetMenu(c tele.Context) error {
 	defer cancel()
 	cats, _ := b.Store.GetCategories(ctx, c.Sender().ID)
 	if len(cats) == 0 {
-		return c.Send("No categories yet. Create some first with `/cat add`.", mainMenu())
+		return c.Edit("No categories yet. Create some first with `/cat add`.", mainMenu())
 	}
 	budgets, _ := b.Store.GetBudgets(ctx, c.Sender().ID)
-	return c.Send(msgBudgets(cats, budgets), budgetCategoryKeyboard(cats))
+	return c.Edit(msgBudgets(cats, budgets), budgetCategoryKeyboard(cats))
 }
 
 func (b *Bot) handleBudgetPick(c tele.Context) error {

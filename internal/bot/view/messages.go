@@ -70,7 +70,7 @@ func Summary(rows []models.BudgetRow, rta float64) string {
 		filled := int(pct * barWidth)
 		bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
 
-		// Left amount
+		// Left status
 		left := ""
 		if r.Remaining > 0 {
 			left = fmt.Sprintf("+%s left", formatAmount(r.Remaining))
@@ -81,8 +81,8 @@ func Summary(rows []models.BudgetRow, rta float64) string {
 		}
 
 		b.WriteString(fmt.Sprintf("\n  %s %s\n", r.Emoji, r.Name))
-		b.WriteString(fmt.Sprintf("     %s   %s\n", bar, left))
-		b.WriteString(fmt.Sprintf("     %s / %s", formatAmount(r.Spent), formatAmount(r.Available)))
+		b.WriteString(fmt.Sprintf("     %s   %d%%\n", bar, int(pct*100)))
+		b.WriteString(fmt.Sprintf("     %s / %s  ·  %s", formatAmount(r.Spent), formatAmount(r.Available), left))
 
 		totalSpent += r.Spent
 		totalBudget += r.Available

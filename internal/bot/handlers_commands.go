@@ -1,7 +1,6 @@
 package bot
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -13,94 +12,83 @@ import (
 // ─── /cat ──────────────────────────────────────────────────
 
 func (b *Bot) handleCat(c tele.Context) error {
+	h := b.withCtx(c); defer h.done()
 	args := c.Args()
 	if len(args) == 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-		defer cancel()
-		return listView(c, b.Store, ctx, c.Sender().ID)
+		return h.send(msgCategories(h.cats(), h.groups()))
 	}
-
 	switch args[0] {
 	case "add":
-		return b.catAdd(c, args[1:])
+		return b.catAdd(h, args[1:])
 	case "rm", "remove", "delete":
-		return b.catRemove(c, args[1:])
+		return b.catRemove(h, args[1:])
 	case "list", "ls":
-		ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-		defer cancel()
-		return listView(c, b.Store, ctx, c.Sender().ID)
+		return h.send(msgCategories(h.cats(), h.groups()))
 	default:
-		return c.Send("Usage:\n`/cat add 🍞 Name`\n`/cat rm Name`\n`/cat list`", mainMenu())
+		return h.send("Usage:\n`/cat add 🍞 Name`\n`/cat rm Name`\n`/cat list`")
 	}
 }
 
-func (b *Bot) catAdd(c tele.Context, args []string) error {
+func (b *Bot) catAdd(h *hctx, args []string) error {
 	if len(args) < 1 {
-		return c.Send("Usage: `/cat add 🍞 Name`", mainMenu())
+		return h.send("Usage: `/cat add 🍞 Name`")
 	}
-	emoji := "📌"
-	rest := args
-	if len(args) >= 2 && len([]rune(args[0])) <= 4 {
-		emoji = args[0]
-		rest = args[1:]
-	}
+	emoji, rest := parseEmojiArgs(args, "📌")
 	name := strings.Join(rest, " ")
 
-	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-	defer cancel()
-	cat, err := b.Store.CreateCategory(ctx, c.Sender().ID, name, emoji, nil)
+	cat, err := h.Bot.Store.CreateCategory(h.DB, h.UID, name, emoji, nil)
 	if err != nil {
-		return c.Send("❌ Category already exists or error occurred.", mainMenu())
+		return h.send(respondError("Category already exists or error occurred."))
 	}
-	return c.Send(fmt.Sprintf("✅ Created: %s *%s*", cat.Emoji, cat.Name), mainMenu())
+	return h.send(respondCreated(cat.Emoji, cat.Name, ""))
 }
 
-func (b *Bot) catRemove(c tele.Context, args []string) error {
+func (b *Bot) catRemove(h *hctx, args []string) error {
 	if len(args) < 1 {
-		return c.Send("Usage: `/cat rm Name`", mainMenu())
+		return h.send("Usage: `/cat rm Name`")
 	}
 	name := strings.Join(args, " ")
+	cats := h.cats()
 
-	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-	defer cancel()
-	cats, _ := b.Store.GetCategories(ctx, c.Sender().ID)
-	for _, cat := range cats {
-		if strings.EqualFold(cat.Name, name) {
-			if err := b.Store.DeleteCategory(ctx, cat.ID); err != nil {
-				return c.Send("❌ Error deleting category.", mainMenu())
+	var catEmoji string
+	deleted := false
+	for _, c := range cats {
+		if strings.EqualFold(c.Name, name) {
+			catEmoji = c.Emoji
+			if err := h.Bot.Store.DeleteCategory(h.DB, c.ID); err != nil {
+				return h.send(respondError("Error deleting category."))
 			}
-			return c.Send(fmt.Sprintf("✅ Deleted: %s %s", cat.Emoji, cat.Name), mainMenu())
+			deleted = true
+			break
 		}
 	}
-	return c.Send(fmt.Sprintf("Category *%s* not found.", name), mainMenu())
+	if !deleted {
+		return h.send(fmt.Sprintf("Category *%s* not found.", name))
+	}
+	return h.send(fmt.Sprintf("✅ Deleted: %s %s", catEmoji, name))
 }
 
 // ─── /acc ──────────────────────────────────────────────────
 
 func (b *Bot) handleAcc(c tele.Context) error {
+	h := b.withCtx(c); defer h.done()
 	args := c.Args()
 	if len(args) == 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-		defer cancel()
-		accs, _ := b.Store.GetAccounts(ctx, c.Sender().ID)
-		return c.Send(msgAccounts(accs), mainMenu())
+		return h.send(msgAccounts(h.accs()))
 	}
 	switch args[0] {
 	case "add":
-		return b.accAdd(c, args[1:])
+		return b.accAdd(h, args[1:])
 	case "list", "ls":
-		ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-		defer cancel()
-		accs, _ := b.Store.GetAccounts(ctx, c.Sender().ID)
-		return c.Send(msgAccounts(accs), mainMenu())
+		return h.send(msgAccounts(h.accs()))
 	default:
-		return c.Send("Usage:\n`/acc add 💳 Name [currency]`\n`/acc list`\n\nCurrency: EUR, USD, UAH, PLN... (default: EUR)", mainMenu())
+		return h.send("Usage:\n`/acc add 💳 Name [currency]`\n`/acc list`\n\nCurrency: EUR, USD, UAH, PLN... (default: EUR)")
 	}
 }
 
-func (b *Bot) accAdd(c tele.Context, args []string) error {
+func (b *Bot) accAdd(h *hctx, args []string) error {
 	if len(args) < 1 {
-		return c.Send("Usage: `/acc add 💳 Name [currency]`\nCurrency: EUR, USD, UAH, PLN... (default: EUR)", mainMenu())
+		return h.send("Usage: `/acc add 💳 Name [currency]`\nCurrency: EUR, USD, UAH, PLN... (default: EUR)")
 	}
 	emoji := "💳"
 	name := strings.Join(args, " ")
@@ -111,7 +99,7 @@ func (b *Bot) accAdd(c tele.Context, args []string) error {
 		emoji = args[0]
 		rest := args[1:]
 		if len(rest) == 0 {
-			return c.Send("Usage: `/acc add 💳 Name [currency]`", mainMenu())
+			return h.send("Usage: `/acc add 💳 Name [currency]`")
 		}
 		if len(rest) >= 2 && len(rest[len(rest)-1]) == 3 {
 			currency = strings.ToUpper(rest[len(rest)-1])
@@ -124,24 +112,23 @@ func (b *Bot) accAdd(c tele.Context, args []string) error {
 		name = strings.Join(args[:len(args)-1], " ")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-	defer cancel()
-	acc, err := b.Store.CreateAccount(ctx, c.Sender().ID, name, emoji, currency, 0)
+	acc, err := h.Bot.Store.CreateAccount(h.DB, h.UID, name, emoji, currency, 0)
 	if err != nil {
-		return c.Send("❌ Error creating account. Does it already exist?", mainMenu())
+		return h.send(respondError("Error creating account. Does it already exist?"))
 	}
-	return c.Send(fmt.Sprintf("✅ Created: %s *%s* (%s)", emoji, acc.Name, acc.Currency), mainMenu())
+	return h.send(fmt.Sprintf("✅ Created: %s *%s* (%s)", emoji, acc.Name, acc.Currency))
 }
 
 // ─── /budget ───────────────────────────────────────────────
 
 func (b *Bot) handleBudget(c tele.Context) error {
+	h := b.withCtx(c); defer h.done()
 	args := c.Args()
 	if len(args) < 2 || args[0] != "set" {
 		return b.handleBudgetMenu(c)
 	}
 	if len(args) < 3 {
-		return c.Send("Usage: `/budget set Name amount [interval]`\nExample: `/budget set Groceries 5000 monthly`\n\nIntervals: weekly, biweekly, monthly, quarterly, or 30d", mainMenu())
+		return h.send("Usage: `/budget set Name amount [interval]`\nExample: `/budget set Groceries 5000 monthly`\n\nIntervals: weekly, biweekly, monthly, quarterly, or 30d")
 	}
 
 	amountIdx := len(args) - 1
@@ -156,50 +143,41 @@ func (b *Bot) handleBudget(c tele.Context) error {
 
 	amount, err := strconv.ParseFloat(args[amountIdx], 64)
 	if err != nil || amount < 0 {
-		return c.Send("Amount must be a number, e.g. `5000`", mainMenu())
+		return h.send("Amount must be a number, e.g. `5000`")
 	}
 
 	catName := strings.Join(args[1:amountIdx], " ")
-	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-	defer cancel()
-
-	cats, _ := b.Store.GetCategories(ctx, c.Sender().ID)
-	for _, cat := range cats {
+	for _, cat := range h.cats() {
 		if strings.EqualFold(cat.Name, catName) {
-			bd, err := b.Store.SetBudget(ctx, c.Sender().ID, cat.ID, intervalDays, intervalMonths, amount)
+			bd, err := h.Bot.Store.SetBudget(h.DB, h.UID, cat.ID, intervalDays, intervalMonths, amount)
 			if err != nil {
-				return c.Send("❌ Error setting budget.", mainMenu())
+				return h.send(respondError("Error setting budget."))
 			}
-			return c.Send(fmt.Sprintf("✅ Budget for %s *%s*: *%.0f* (%s)\n_Next reset: %s_",
+			return h.send(fmt.Sprintf("✅ Budget for %s *%s*: *%.0f* (%s)\n_Next reset: %s_",
 				cat.Emoji, cat.Name, amount, bd.Description(),
-				bd.PeriodStart.AddDate(0, bd.IntervalMonths, bd.IntervalDays).Format("Jan 2")), mainMenu())
+				bd.PeriodStart.AddDate(0, bd.IntervalMonths, bd.IntervalDays).Format("Jan 2")))
 		}
 	}
-	return c.Send(fmt.Sprintf("Category *%s* not found.", catName), mainMenu())
+	return h.send(fmt.Sprintf("Category *%s* not found.", catName))
 }
 
 // ─── /move ─────────────────────────────────────────────────
 
 func (b *Bot) handleMove(c tele.Context) error {
+	h := b.withCtx(c); defer h.done()
 	text := strings.TrimSpace(c.Message().Payload)
 	parts := strings.Fields(text)
 	if len(parts) < 5 || strings.ToLower(parts[1]) != "from" || strings.ToLower(parts[3]) != "to" {
-		return c.Send("Usage: `/move <amount> from <Account> to <Account>`\n\nExample: `/move 500 from Mono to Cash`\n\nOr tap *🔀 Move* for interactive mode.", mainMenu())
+		return h.send("Usage: `/move <amount> from <Account> to <Account>`\n\nExample: `/move 500 from Mono to Cash`\n\nOr tap *🔀 Move* for interactive mode.")
 	}
 
 	amount, err := strconv.ParseFloat(parts[0], 64)
 	if err != nil || amount <= 0 {
-		return c.Send("❌ Invalid amount. Use a positive number, e.g. `500`", mainMenu())
+		return h.send("❌ Invalid amount. Use a positive number, e.g. `500`")
 	}
 
 	fromName, toName := parts[2], parts[4]
-	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-	defer cancel()
-
-	accs, err := b.Store.GetAccounts(ctx, c.Sender().ID)
-	if err != nil {
-		return c.Send("Error loading accounts", mainMenu())
-	}
+	accs := h.accs()
 
 	var from, to *models.Account
 	for i, a := range accs {
@@ -211,93 +189,76 @@ func (b *Bot) handleMove(c tele.Context) error {
 		}
 	}
 	if from == nil {
-		return c.Send(fmt.Sprintf("❌ Account *%s* not found.", fromName), mainMenu())
+		return h.send(fmt.Sprintf("❌ Account *%s* not found.", fromName))
 	}
 	if to == nil {
-		return c.Send(fmt.Sprintf("❌ Account *%s* not found.", toName), mainMenu())
+		return h.send(fmt.Sprintf("❌ Account *%s* not found.", toName))
 	}
 	if from.ID == to.ID {
-		return c.Send("❌ Source and destination must be different accounts.", mainMenu())
+		return h.send("❌ Source and destination must be different accounts.")
 	}
 
-	tx, err := b.Store.CreateTransaction(ctx, c.Sender().ID, from.ID, nil, "transfer", amount, &to.ID, fmt.Sprintf("→ %s", to.Name))
+	tx, err := h.Bot.Store.CreateTransaction(h.DB, h.UID, from.ID, nil, "transfer", amount, &to.ID, fmt.Sprintf("→ %s", to.Name))
 	if err != nil {
-		return c.Send("❌ Error creating transfer.", mainMenu())
+		return h.send(respondError("Error creating transfer."))
 	}
 
-	return c.Send(fmt.Sprintf("✅ Transferred *%.2f* %s\n%s %s → %s %s\n_%s_",
+	return h.send(fmt.Sprintf("✅ Transferred *%.2f* %s\n%s %s → %s %s\n_%s_",
 		amount, from.Currency, from.Emoji, from.Name, to.Emoji, to.Name,
-		tx.CreatedAt.Format("Jan 2 15:04")), mainMenu())
+		tx.CreatedAt.Format("Jan 2 15:04")))
 }
 
 // ─── /group ────────────────────────────────────────────────
 
 func (b *Bot) handleGroup(c tele.Context) error {
+	h := b.withCtx(c); defer h.done()
 	args := c.Args()
 	if len(args) == 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-		defer cancel()
-		groups, _ := b.Store.GetGroups(ctx, c.Sender().ID)
-		return c.Send(msgGroups(groups), mainMenu())
+		return h.send(msgGroups(h.groups()))
 	}
 	switch args[0] {
 	case "add":
-		return b.groupAdd(c, args[1:])
+		return b.groupAdd(h, args[1:])
 	case "rm", "remove":
-		return b.groupRemove(c, args[1:])
+		return b.groupRemove(h, args[1:])
 	default:
-		return c.Send("Usage:\n`/group add 📁 Name`\n`/group rm Name`\n`/group` — list", mainMenu())
+		return h.send("Usage:\n`/group add 📁 Name`\n`/group rm Name`\n`/group` — list")
 	}
 }
 
-func (b *Bot) groupAdd(c tele.Context, args []string) error {
+func (b *Bot) groupAdd(h *hctx, args []string) error {
 	if len(args) < 1 {
-		return c.Send("Usage: `/group add 📁 Name`", mainMenu())
+		return h.send("Usage: `/group add 📁 Name`")
 	}
-	emoji := "📁"
-	rest := args
-	if len([]rune(args[0])) <= 4 && args[0][0] > 127 && len(args) >= 2 {
-		emoji = args[0]
-		rest = args[1:]
-	}
+	emoji, rest := parseEmojiArgs(args, "📁")
 	name := strings.Join(rest, " ")
 	if name == "" {
-		return c.Send("Usage: `/group add 📁 Name`", mainMenu())
+		return h.send("Usage: `/group add 📁 Name`")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-	defer cancel()
-	g, err := b.Store.CreateGroup(ctx, c.Sender().ID, name, emoji)
+	g, err := h.Bot.Store.CreateGroup(h.DB, h.UID, name, emoji)
 	if err != nil {
-		return c.Send("❌ Group already exists or error occurred.", mainMenu())
+		return h.send(respondError("Group already exists or error occurred."))
 	}
-	return c.Send(fmt.Sprintf("✅ Created group: %s *%s*", g.Emoji, g.Name), mainMenu())
+	return h.send(respondCreated(g.Emoji, g.Name, "group"))
 }
 
-func (b *Bot) groupRemove(c tele.Context, args []string) error {
+func (b *Bot) groupRemove(h *hctx, args []string) error {
 	if len(args) < 1 {
-		return c.Send("Usage: `/group rm Name`", mainMenu())
+		return h.send("Usage: `/group rm Name`")
 	}
 	name := strings.Join(args, " ")
-	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-	defer cancel()
-	groups, _ := b.Store.GetGroups(ctx, c.Sender().ID)
-	for _, g := range groups {
-		if strings.EqualFold(g.Name, name) {
-			if err := b.Store.DeleteGroup(ctx, g.ID); err != nil {
-				return c.Send("❌ Error deleting group.", mainMenu())
-			}
-			return c.Send(fmt.Sprintf("✅ Deleted group: %s %s", g.Emoji, g.Name), mainMenu())
-		}
+	groups := h.groups()
+
+	found, err := deleteByName(groups, name, func(g models.CategoryGroup) string { return g.Name },
+		func(g models.CategoryGroup) error { return h.Bot.Store.DeleteGroup(h.DB, g.ID) },
+	)
+	if err != nil {
+		return h.send(respondError("Error deleting group."))
 	}
-	return c.Send(fmt.Sprintf("Group *%s* not found.", name), mainMenu())
-}
-
-// ─── Shared view helper ────────────────────────────────────
-
-func listView(c tele.Context, store models.Store, ctx context.Context, userID int64) error {
-	cats, _ := store.GetCategories(ctx, userID)
-	groups, _ := store.GetGroups(ctx, userID)
-	return c.Send(msgCategories(cats, groups), mainMenu())
+	if !found {
+		return h.send(fmt.Sprintf("Group *%s* not found.", name))
+	}
+	return h.send(fmt.Sprintf("✅ Deleted group: %s", name))
 }
 
 // ─── Interval parsing ─────────────────────────────────────
@@ -322,5 +283,3 @@ func parseInterval(s string) (int, int) {
 		return 0, 0
 	}
 }
-
-// unused import guard

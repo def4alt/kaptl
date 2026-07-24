@@ -1,7 +1,6 @@
 package bot
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -16,65 +15,53 @@ func (b *Bot) handleManageMenu(c tele.Context) error {
 }
 
 func (b *Bot) handleManageCats(c tele.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-	defer cancel()
-	cats, _ := b.Store.GetCategories(ctx, c.Sender().ID)
-	groups, _ := b.Store.GetGroups(ctx, c.Sender().ID)
-
+	h := b.withCtx(c); defer h.done()
 	menu := &tele.ReplyMarkup{}
 	menu.Inline(
 		menu.Row(menu.Data("➕ Add Category", cbEmoji, "new_cat")),
 		menu.Row(menu.Data("◀ Back", "mg_back")),
 	)
-	return c.Edit(msgCategories(cats, groups), menu)
+	return c.Edit(msgCategories(h.cats(), h.groups()), menu)
 }
 
 func (b *Bot) handleManageAccs(c tele.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-	defer cancel()
-	accs, _ := b.Store.GetAccounts(ctx, c.Sender().ID)
-
+	h := b.withCtx(c); defer h.done()
 	menu := &tele.ReplyMarkup{}
 	menu.Inline(
 		menu.Row(menu.Data("➕ Add Account", cbEmoji, "new_acc")),
 		menu.Row(menu.Data("◀ Back", "mg_back")),
 	)
-	return c.Edit(msgAccounts(accs), menu)
+	return c.Edit(msgAccounts(h.accs()), menu)
 }
 
 func (b *Bot) handleManageBuds(c tele.Context) error { return b.handleBudgetMenu(c) }
 
 func (b *Bot) handleManageGrps(c tele.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-	defer cancel()
-	groups, _ := b.Store.GetGroups(ctx, c.Sender().ID)
-
+	h := b.withCtx(c); defer h.done()
 	menu := &tele.ReplyMarkup{}
 	menu.Inline(
 		menu.Row(menu.Data("➕ Add Group", cbEmoji, "new_group")),
 		menu.Row(menu.Data("◀ Back", "mg_back")),
 	)
-	return c.Edit(msgGroups(groups), menu)
+	return c.Edit(msgGroups(h.groups()), menu)
 }
 
 // ─── Summary / Recent ─────────────────────────────────────
 
 func (b *Bot) handleSummary(c tele.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-	defer cancel()
-	rows, _ := b.Store.GetBudgetSummary(ctx, c.Sender().ID, 0)
+	h := b.withCtx(c); defer h.done()
+	rows, _ := h.Bot.Store.GetBudgetSummary(h.DB, h.UID, 0)
 	if len(rows) == 0 {
-		return c.Send("No categories yet. Use `/cat add 🍞 Name`.", mainMenu())
+		return h.send("No categories yet. Use `/cat add 🍞 Name`.")
 	}
-	rta, _ := b.Store.GetReadyToAssign(ctx, c.Sender().ID)
-	return c.Send(msgSummary(rows, rta), mainMenu())
+	rta, _ := h.Bot.Store.GetReadyToAssign(h.DB, h.UID)
+	return h.send(msgSummary(rows, rta))
 }
 
 func (b *Bot) handleRecent(c tele.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-	defer cancel()
-	txs, _ := b.Store.GetRecentTransactions(ctx, c.Sender().ID, 10)
-	return c.Send(msgRecent(txs), mainMenu())
+	h := b.withCtx(c); defer h.done()
+	txs, _ := h.Bot.Store.GetRecentTransactions(h.DB, h.UID, 10)
+	return h.send(msgRecent(txs))
 }
 
 // ─── Cancel ───────────────────────────────────────────────
@@ -102,17 +89,12 @@ func (b *Bot) handleBackBtn(c tele.Context) error {
 
 	switch state.PrevStep {
 	case "pick_category":
-		ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-		defer cancel()
-		cats, _ := b.Store.GetCategories(ctx, uid)
-		return c.Edit("*Pick a category:*", categoryKeyboard(cats))
-
+		h := b.withCtx(c); defer h.done()
+		return c.Edit("*Pick a category:*", categoryKeyboard(h.cats()))
 	case "move_start":
-		ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-		defer cancel()
-		accs, _ := b.Store.GetAccounts(ctx, uid)
+		h := b.withCtx(c); defer h.done()
 		state.Step = StepAwaitMoveSource
-		return c.Edit("🔀 *Transfer*\n\nFrom: —\nTo: —\nAmount: —", accountKeyboard(accs))
+		return c.Edit("🔀 *Transfer*\n\nFrom: —\nTo: —\nAmount: —", accountKeyboard(h.accs()))
 	}
 	return c.Respond(&tele.CallbackResponse{Text: "Can't go back"})
 }
@@ -126,26 +108,14 @@ func (b *Bot) handleEmojiPick(c tele.Context) error {
 
 	switch data {
 	case "new_cat":
-		b.setState(uid, &userState{
-			Step:          StepAwaitCatEmoji,
-			TemplateMsgID: c.Message().ID, ChatID: c.Chat().ID,
-		})
+		b.startWizard(uid, c, StepAwaitCatEmoji, "", "")
 		return c.Edit("🏷️ *New Category*\n\nEmoji: —\nName: —\nGroup: —\n\n_Pick an emoji:_", emojiKeyboard())
-
 	case "new_acc":
-		b.setState(uid, &userState{
-			Step:          StepAwaitAccEmoji,
-			TemplateMsgID: c.Message().ID, ChatID: c.Chat().ID,
-		})
+		b.startWizard(uid, c, StepAwaitAccEmoji, "", "")
 		return c.Edit("💰 *New Account*\n\nEmoji: —\nName: —\nCurrency: —\n\n_Pick an emoji:_", emojiKeyboard())
-
 	case "new_group":
-		b.setState(uid, &userState{
-			Step:          StepAwaitGroupEmoji,
-			TemplateMsgID: c.Message().ID, ChatID: c.Chat().ID,
-		})
+		b.startWizard(uid, c, StepAwaitGroupEmoji, "", "")
 		return c.Edit("📁 *New Group*\n\nEmoji: —\nName: —\n\n_Pick an emoji:_", emojiKeyboard())
-
 	default:
 		state := b.stateFor(uid)
 		if state == nil {
@@ -170,21 +140,19 @@ func (b *Bot) handleEmojiPick(c tele.Context) error {
 
 func (b *Bot) receiveCatName(c tele.Context, state *userState) error {
 	name := strings.TrimSpace(c.Text())
-	if name == "" || len(name) > 100 {
+	if !isValidName(name) {
 		return c.Send("Name must be 1-100 characters.", cancelBtn())
 	}
 	state.Name = name
 	state.Step = StepAwaitCatGroup
 
-	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-	defer cancel()
-	groups, _ := b.Store.GetGroups(ctx, c.Sender().ID)
-	return c.Send(fmt.Sprintf("🏷️ *New Category*\n\nEmoji: %s\nName: %s\nGroup: —\n\n_Pick a group:_", state.Emoji, name), groupPickerKeyboard(groups))
+	h := b.withCtx(c); defer h.done()
+	return c.Send(fmt.Sprintf("🏷️ *New Category*\n\nEmoji: %s\nName: %s\nGroup: —\n\n_Pick a group:_", state.Emoji, name), groupPickerKeyboard(h.groups()))
 }
 
 func (b *Bot) receiveAccName(c tele.Context, state *userState) error {
 	name := strings.TrimSpace(c.Text())
-	if name == "" || len(name) > 100 {
+	if !isValidName(name) {
 		return c.Send("Name must be 1-100 characters.", cancelBtn())
 	}
 	state.Name = name
@@ -194,20 +162,19 @@ func (b *Bot) receiveAccName(c tele.Context, state *userState) error {
 
 func (b *Bot) receiveGroupName(c tele.Context, state *userState) error {
 	name := strings.TrimSpace(c.Text())
-	if name == "" || len(name) > 100 {
+	if !isValidName(name) {
 		return c.Send("Name must be 1-100 characters.", cancelBtn())
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-	defer cancel()
-	g, err := b.Store.CreateGroup(ctx, c.Sender().ID, name, state.Emoji)
+	h := b.withCtx(c); defer h.done()
+	g, err := h.Bot.Store.CreateGroup(h.DB, h.UID, name, state.Emoji)
 	if err != nil {
-		return c.Send("❌ Group already exists.", manageMenu())
+		return h.send(respondError("Group already exists."))
 	}
-	b.clearState(c.Sender().ID)
-	return c.Send(fmt.Sprintf("✅ Created group: %s *%s*", g.Emoji, g.Name), manageMenu())
+	h.Bot.clearState(h.UID)
+	return h.send(respondCreated(g.Emoji, g.Name, "group"))
 }
 
-// ─── Currency / Interval / Group pickers ──────────────────
+// ─── Picker callbacks ─────────────────────────────────────
 
 func (b *Bot) handleCurrencyPick(c tele.Context) error {
 	uid := c.Sender().ID
@@ -217,14 +184,13 @@ func (b *Bot) handleCurrencyPick(c tele.Context) error {
 	}
 	currency := c.Callback().Data
 
-	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-	defer cancel()
-	acc, err := b.Store.CreateAccount(ctx, uid, state.Name, state.Emoji, currency, 0)
+	h := b.withCtx(c); defer h.done()
+	acc, err := h.Bot.Store.CreateAccount(h.DB, uid, state.Name, state.Emoji, currency, 0)
 	if err != nil {
-		return c.Edit("❌ Error creating account.", manageMenu())
+		return h.edit(respondError("Error creating account."), manageMenu())
 	}
 	b.clearState(uid)
-	return c.Edit(fmt.Sprintf("✅ Created: %s *%s* (%s)", acc.Emoji, acc.Name, acc.Currency), manageMenu())
+	return h.edit(fmt.Sprintf("✅ Created: %s *%s* (%s)", acc.Emoji, acc.Name, acc.Currency), manageMenu())
 }
 
 func (b *Bot) handleIntervalPick(c tele.Context) error {
@@ -236,15 +202,13 @@ func (b *Bot) handleIntervalPick(c tele.Context) error {
 	interval := c.Callback().Data
 	d, m := parseInterval(interval)
 
-	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-	defer cancel()
-	bd, err := b.Store.SetBudget(ctx, uid, state.EditingBudget, d, m, state.Amount)
+	h := b.withCtx(c); defer h.done()
+	bd, err := h.Bot.Store.SetBudget(h.DB, uid, state.EditingBudget, d, m, state.Amount)
 	if err != nil {
-		return c.Edit("❌ Error saving budget.", manageMenu())
+		return h.edit(respondError("Error saving budget."), manageMenu())
 	}
 	b.clearState(uid)
-	cats, _ := b.Store.GetCategories(ctx, uid)
-	return c.Edit(fmt.Sprintf("✅ Budget: %s *%.0f* (%s)", findCatName(cats, state.EditingBudget), state.Amount, bd.Description()), manageMenu())
+	return h.edit(fmt.Sprintf("✅ Budget: %s *%.0f* (%s)", h.catName(state.EditingBudget), state.Amount, bd.Description()), manageMenu())
 }
 
 func (b *Bot) handleGroupPick(c tele.Context) error {
@@ -261,12 +225,11 @@ func (b *Bot) handleGroupPick(c tele.Context) error {
 		groupID = &id
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
-	defer cancel()
-	cat, err := b.Store.CreateCategory(ctx, uid, state.Name, state.Emoji, groupID)
+	h := b.withCtx(c); defer h.done()
+	cat, err := h.Bot.Store.CreateCategory(h.DB, uid, state.Name, state.Emoji, groupID)
 	if err != nil {
-		return c.Edit("❌ Category already exists.", manageMenu())
+		return h.edit(respondError("Category already exists."), manageMenu())
 	}
 	b.clearState(uid)
-	return c.Edit(fmt.Sprintf("✅ Created: %s *%s*", cat.Emoji, cat.Name), manageMenu())
+	return h.edit(respondCreated(cat.Emoji, cat.Name, ""), manageMenu())
 }

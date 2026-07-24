@@ -25,6 +25,9 @@ type userState struct {
 	Description   string
 	TxType        string // "expense", "income", or "transfer"
 	EditingBudget int64  // category ID when setting budget
+	TemplateMsgID int    // message ID of the progress template
+	ChatID        int64  // chat where the template lives
+	PrevStep      string // previous step for Back navigation
 }
 
 // dbTimeout is the maximum time for any single database operation.
@@ -490,9 +493,18 @@ func (b *Bot) handleAddExpense(c tele.Context) error {
 
 func (b *Bot) handleAddIncome(c tele.Context) error {
 	userID := c.Sender().ID
-	b.setState(userID, &userState{Step: "awaiting_income_amount", TxType: "income"})
+	b.setState(userID, &userState{
+		Step:       "awaiting_income_amount",
+		TxType:     "income",
+		TemplateMsgID: c.Message().ID,
+		ChatID:     c.Chat().ID,
+	})
 
-	return c.Send("*Enter the income amount:*\n\nJust type a number, e.g. `1500`", cancelBtn())
+	text := progressTemplate("➕ *New Income*", map[string]string{
+		"Amount":  "—",
+		"Account": "—",
+	})
+	return c.Edit(text, cancelBtn())
 }
 
 // ─── Move / Transfer between accounts ──────────────────────
@@ -573,8 +585,19 @@ func (b *Bot) handleMoveBtn(c tele.Context) error {
 		return c.Send("Need at least 2 accounts to transfer. Use `/acc add 💳 Name` first.", mainMenu())
 	}
 
-	b.setState(userID, &userState{Step: "awaiting_move_source", TxType: "transfer"})
-	return c.Edit("*From which account?*", accountKeyboard(accs))
+	b.setState(userID, &userState{
+		Step:       "awaiting_move_source",
+		TxType:     "transfer",
+		TemplateMsgID: c.Message().ID,
+		ChatID:     c.Chat().ID,
+	})
+
+	text := progressTemplate("🔀 *Transfer*", map[string]string{
+		"From":   "—",
+		"To":     "—",
+		"Amount": "—",
+	})
+	return c.Edit(text, accountKeyboard(accs))
 }
 
 // ─── Summary ──────────────────────────────────────────────
@@ -805,7 +828,27 @@ func (b *Bot) receiveAmount(c tele.Context, state *userState) error {
 		return c.Send("No accounts! Create one with `/acc add 💳 Name`", mainMenu())
 	}
 
-	return c.Send(fmt.Sprintf("💰 *%.2f* — pick an account:", amount), accountKeyboard(accs))
+	// Look up category name
+	cats, _ := b.Store.GetCategories(ctx, userID)
+	catName := "—"
+	for _, cat := range cats {
+		if cat.ID == state.CategoryID {
+			catName = cat.Emoji + " " + cat.Name
+			break
+		}
+	}
+
+	fields := map[string]string{
+		"Category": catName,
+		"Amount":   fmt.Sprintf("€%.2f", amount),
+		"Account":  "—",
+	}
+	text := progressTemplate("➖ *New Expense*", fields)
+
+	if state.TemplateMsgID != 0 {
+		b.editTemplate(state, text, accountKeyboard(accs))
+	}
+	return c.Send("\u200b", &tele.SendOptions{ReplyMarkup: &tele.ReplyMarkup{}}) // dummy to clear input
 }
 
 // ─── Step: receive account for expense ────────────────────
@@ -866,7 +909,15 @@ func (b *Bot) receiveIncomeAmount(c tele.Context, state *userState) error {
 		return c.Send("No accounts! Create one with `/acc add 💳 Name`", mainMenu())
 	}
 
-	return c.Send(fmt.Sprintf("💰 +*%.2f* — pick an account:", amount), accountKeyboard(accs))
+	text := progressTemplate("➕ *New Income*", map[string]string{
+		"Amount":  fmt.Sprintf("€%.2f", amount),
+		"Account": "—",
+	})
+
+	if state.TemplateMsgID != 0 {
+		b.editTemplate(state, text, accountKeyboard(accs))
+	}
+	return c.Send("\u200b") // clear input
 }
 
 // ─── Step: receive account for income ────────────────────
@@ -918,7 +969,7 @@ func (b *Bot) receiveMoveAmount(c tele.Context, state *userState) error {
 		return c.Send("❌ Account not found. Start over.", mainMenu())
 	}
 
-	tx, err := b.Store.CreateTransaction(ctx, userID, state.AccountID, nil, "transfer", amount, &state.TargetAccountID, fmt.Sprintf("→ %s", dstAcc.Name))
+	_, err = b.Store.CreateTransaction(ctx, userID, state.AccountID, nil, "transfer", amount, &state.TargetAccountID, fmt.Sprintf("→ %s", dstAcc.Name))
 	if err != nil {
 		log.Printf("create transfer: %v", err)
 		b.clearState(userID)
@@ -926,11 +977,13 @@ func (b *Bot) receiveMoveAmount(c tele.Context, state *userState) error {
 	}
 
 	b.clearState(userID)
-	return c.Send(fmt.Sprintf("✅ Transferred *%.2f* %s\n%s %s → %s %s\n_%s_",
-		amount, srcAcc.Currency,
-		srcAcc.Emoji, srcAcc.Name,
-		dstAcc.Emoji, dstAcc.Name,
-		tx.CreatedAt.Format("Jan 2 15:04")), mainMenu())
+
+	text := progressTemplate("🔀 *Transfer*", map[string]string{
+		"From":   srcAcc.Emoji + " " + srcAcc.Name,
+		"To":     dstAcc.Emoji + " " + dstAcc.Name,
+		"Amount": fmt.Sprintf("€%.2f", amount),
+	})
+	return c.Send("✅ Transferred!\n\n"+text, mainMenu())
 }
 
 // ─── Step: receive budget amount ─────────────────────────
@@ -980,19 +1033,32 @@ func (b *Bot) handleCatPick(c tele.Context) error {
 		return c.Respond(&tele.CallbackResponse{Text: "Invalid category"})
 	}
 
+	// Look up category name
+	cats, _ := b.Store.GetCategories(ctx, userID)
+	var catName string
+	for _, cat := range cats {
+		if cat.ID == catID {
+			catName = cat.Emoji + " " + cat.Name
+			break
+		}
+	}
+
 	b.setState(userID, &userState{
 		Step:       "awaiting_amount",
 		CategoryID: catID,
 		TxType:     "expense",
+		TemplateMsgID: c.Message().ID,
+		ChatID:     c.Chat().ID,
+		PrevStep:   "pick_category",
 	})
 
-	cats, _ := b.Store.GetCategories(ctx, userID)
-	for _, cat := range cats {
-		if cat.ID == catID {
-			return c.Edit(fmt.Sprintf("%s *%s*\n\nEnter the amount:", cat.Emoji, cat.Name), cancelBtn())
-		}
+	fields := map[string]string{
+		"Category": catName,
+		"Amount":   "—",
+		"Account":  "—",
 	}
-	return c.Edit("Enter the amount:", cancelBtn())
+	text := progressTemplate("➖ *New Expense*", fields)
+	return c.Edit(text, cancelBtn())
 }
 
 func (b *Bot) handleBudgetPick(c tele.Context) error {
@@ -1052,7 +1118,7 @@ func (b *Bot) handleAccPick(c tele.Context) error {
 
 	switch state.TxType {
 	case "expense":
-		tx, err := b.Store.CreateTransaction(ctx, userID, acc.ID, &state.CategoryID, "expense", state.Amount, nil, state.Description)
+		_, err := b.Store.CreateTransaction(ctx, userID, acc.ID, &state.CategoryID, "expense", state.Amount, nil, state.Description)
 		if err != nil {
 			return c.Edit("❌ Error saving transaction. Try again.", mainMenu())
 		}
@@ -1062,23 +1128,30 @@ func (b *Bot) handleAccPick(c tele.Context) error {
 		cats, _ := b.Store.GetCategories(ctx, userID)
 		for _, c := range cats {
 			if c.ID == state.CategoryID {
-				catName = c.Name
+				catName = c.Emoji + " " + c.Name
 				break
 			}
 		}
 
-		return c.Edit(fmt.Sprintf("✅ Logged: *%.2f* on *%s* (%s)\n_%s_",
-			tx.Amount, acc.Name, catName, tx.CreatedAt.Format("Jan 2 15:04")), mainMenu())
+		text := progressTemplate("➖ *New Expense*", map[string]string{
+			"Category": catName,
+			"Amount":   fmt.Sprintf("€%.2f", state.Amount),
+			"Account":  acc.Emoji + " " + acc.Name,
+		})
+		return c.Edit("✅ Logged!\n\n" + text, mainMenu())
 
 	case "income":
-		tx, err := b.Store.CreateTransaction(ctx, userID, acc.ID, nil, "income", state.Amount, nil, "")
+		_, err := b.Store.CreateTransaction(ctx, userID, acc.ID, nil, "income", state.Amount, nil, "")
 		if err != nil {
 			return c.Edit("❌ Error saving income. Try again.", mainMenu())
 		}
 		b.clearState(userID)
 
-		return c.Edit(fmt.Sprintf("✅ Income: +*%.2f* on *%s*\n_%s_",
-			tx.Amount, acc.Name, tx.CreatedAt.Format("Jan 2 15:04")), mainMenu())
+		text := progressTemplate("➕ *New Income*", map[string]string{
+			"Amount":  fmt.Sprintf("€%.2f", state.Amount),
+			"Account": acc.Emoji + " " + acc.Name,
+		})
+		return c.Edit("✅ Income logged!\n\n" + text, mainMenu())
 
 	case "transfer":
 		switch state.Step {
@@ -1086,24 +1159,27 @@ func (b *Bot) handleAccPick(c tele.Context) error {
 			state.Step = "awaiting_move_target"
 			state.AccountID = acc.ID
 			accs, _ := b.Store.GetAccounts(ctx, userID)
-			return c.Edit(
-				fmt.Sprintf("*From:* %s %s\n\n*To which account?*", acc.Emoji, acc.Name),
-				accountKeyboardExclude(accs, acc.ID),
-			)
+			text := progressTemplate("🔀 *Transfer*", map[string]string{
+				"From":   acc.Emoji + " " + acc.Name,
+				"To":     "—",
+				"Amount": "—",
+			})
+			return c.Edit(text, accountKeyboardExclude(accs, acc.ID))
 
 		case "awaiting_move_target":
 			state.Step = "awaiting_move_amount"
 			state.TargetAccountID = acc.ID
-			destAcc := acc
 			srcAcc, _ := b.Store.GetAccount(ctx, state.AccountID)
 			srcName := "Unknown"
 			if srcAcc != nil {
-				srcName = fmt.Sprintf("%s %s", srcAcc.Emoji, srcAcc.Name)
+				srcName = srcAcc.Emoji + " " + srcAcc.Name
 			}
-			return c.Edit(
-				fmt.Sprintf("*From:* %s\n*To:* %s %s\n\n*Enter the amount to transfer:*", srcName, destAcc.Emoji, destAcc.Name),
-				cancelBtn(),
-			)
+			text := progressTemplate("🔀 *Transfer*", map[string]string{
+				"From":   srcName,
+				"To":     acc.Emoji + " " + acc.Name,
+				"Amount": "—",
+			})
+			return c.Edit(text, cancelBtn())
 		}
 	}
 

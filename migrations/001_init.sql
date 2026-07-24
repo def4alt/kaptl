@@ -1,9 +1,8 @@
 -- kaptl database schema
--- Run: psql -U <user> -d <db> -f migrations/001_init.sql
+-- telegram_id is the primary key for users — no separate auto-increment id column.
 
 CREATE TABLE IF NOT EXISTS users (
-    id SERIAL PRIMARY KEY,
-    telegram_id BIGINT UNIQUE NOT NULL,
+    telegram_id BIGINT PRIMARY KEY,
     username TEXT,
     first_name TEXT,
     language_code TEXT DEFAULT 'en',
@@ -12,7 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS accounts (
     id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     type TEXT NOT NULL CHECK (type IN ('checking', 'savings', 'cash', 'credit_card')),
     currency TEXT NOT NULL DEFAULT 'UAH',
@@ -22,7 +21,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 
 CREATE TABLE IF NOT EXISTS categories (
     id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     emoji TEXT NOT NULL DEFAULT '📌',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -31,7 +30,7 @@ CREATE TABLE IF NOT EXISTS categories (
 
 CREATE TABLE IF NOT EXISTS transactions (
     id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
     account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
     type TEXT NOT NULL CHECK (type IN ('expense', 'income', 'transfer')),
@@ -43,7 +42,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 
 CREATE TABLE IF NOT EXISTS budgets (
     id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
     category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
     month DATE NOT NULL,
     amount DECIMAL(12,2) NOT NULL CHECK (amount >= 0),

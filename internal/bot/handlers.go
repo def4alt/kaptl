@@ -842,6 +842,8 @@ func (b *Bot) handleCallback(c tele.Context) error {
 	userID := c.Sender().ID
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
+	log.Printf("callback: data=%q, user=%d", data, userID)
+
 	// Always acknowledge the callback so Telegram stops the spinner.
 	// Specific handlers below override this with their own response.
 	defer c.Respond()

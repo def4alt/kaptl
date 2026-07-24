@@ -201,8 +201,31 @@ func (d *DB) SetBudget(ctx context.Context, userID int64, categoryID int64, inte
 }
 
 // GetBudgetSummary returns categories with spent/budget/available/remaining for the current period.
-// periodOffset shifts the view: 0=current, -1=previous, 1=next.
+// Automatically rolls over expired budgets: unspent money carries forward to the next period.
 func (d *DB) GetBudgetSummary(ctx context.Context, userID int64, periodOffset int) ([]models.BudgetRow, error) {
+	// Step 1: Roll over any expired budgets — advance period_start and carry forward leftovers
+	d.Pool.Exec(ctx, `
+		WITH expired AS (
+			SELECT b.id, b.amount, b.rollover,
+				COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount ELSE 0 END), 0) AS spent,
+				b.period_start + make_interval(days => b.interval_days, months => b.interval_months) AS next_start
+			FROM budgets b
+			LEFT JOIN transactions t ON t.category_id = b.category_id
+				AND t.user_id = b.user_id
+				AND t.type = 'expense'
+				AND t.created_at >= b.period_start
+			WHERE b.user_id = $1
+				AND NOW() >= b.period_start + make_interval(days => b.interval_days, months => b.interval_months)
+			GROUP BY b.id
+		)
+		UPDATE budgets b
+		SET rollover = GREATEST(0, e.amount + e.rollover - e.spent),
+		    period_start = e.next_start
+		FROM expired e
+		WHERE b.id = e.id
+	`, userID)
+
+	// Step 2: Return the summary
 	rows, err := d.Pool.Query(ctx, `
 		SELECT
 			c.id, c.user_id, c.name, c.emoji, c.created_at,

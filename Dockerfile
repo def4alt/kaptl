@@ -6,7 +6,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /ynab-bot ./cmd/bot
+RUN CGO_ENABLED=0 GOOS=linux go build -o /kaptl ./cmd/bot
 
 # ─── Run stage ────────────────────────────────────────────
 FROM alpine:3.21
@@ -14,7 +14,7 @@ FROM alpine:3.21
 RUN apk --no-cache add ca-certificates tzdata
 ENV TZ=Europe/Kyiv
 
-COPY --from=builder /ynab-bot /usr/local/bin/ynab-bot
+COPY --from=builder /kaptl /usr/local/bin/kaptl
 
 USER nobody
-CMD ["ynab-bot"]
+CMD ["kaptl"]

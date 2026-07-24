@@ -1,4 +1,4 @@
--- ynab-bot database schema
+-- kaptl database schema
 -- Run: psql -U <user> -d <db> -f migrations/001_init.sql
 
 CREATE TABLE IF NOT EXISTS users (

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/def4alt/kaptl/internal/db"
@@ -26,12 +27,40 @@ type userState struct {
 	EditingBudget int64  // category ID when setting budget
 }
 
+// dbTimeout is the maximum time for any single database operation.
+const dbTimeout = 5 * time.Second
+
+// maxNameLen is the maximum length for user-supplied names.
+const maxNameLen = 100
+
 // ─── Bot ──────────────────────────────────────────────────
 
 type Bot struct {
 	Tele   *tele.Bot
 	DB     *db.DB
+	mu     sync.Mutex
 	States map[int64]*userState // telegramID -> state
+}
+
+// stateFor returns the wizard state for a user, safely.
+func (b *Bot) stateFor(uid int64) *userState {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.States[uid]
+}
+
+// setState stores wizard state for a user.
+func (b *Bot) setState(uid int64, s *userState) {
+	b.mu.Lock()
+	b.States[uid] = s
+	b.mu.Unlock()
+}
+
+// clearState removes wizard state for a user.
+func (b *Bot) clearState(uid int64) {
+	b.mu.Lock()
+	delete(b.States, uid)
+	b.mu.Unlock()
 }
 
 func New(database *db.DB) (*Bot, error) {
@@ -39,7 +68,11 @@ func New(database *db.DB) (*Bot, error) {
 	if token == "" {
 		return nil, fmt.Errorf("TELEGRAM_BOT_TOKEN not set")
 	}
-	allowedID, _ := strconv.ParseInt(os.Getenv("ALLOWED_TELEGRAM_ID"), 10, 64)
+	allowedID, err := strconv.ParseInt(os.Getenv("ALLOWED_TELEGRAM_ID"), 10, 64)
+	if err != nil && os.Getenv("ALLOWED_TELEGRAM_ID") != "" {
+		log.Printf("invalid ALLOWED_TELEGRAM_ID, auth disabled: %v", err)
+		allowedID = 0
+	}
 
 	pref := tele.Settings{
 		Token:  token,
@@ -72,7 +105,7 @@ func New(database *db.DB) (*Bot, error) {
 	// Ensure user exists
 	tb.Use(func(next tele.HandlerFunc) tele.HandlerFunc {
 		return func(c tele.Context) error {
-			ctx := context.Background()
+			ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 			sender := c.Sender()
 			_, err := b.DB.GetOrCreateUser(ctx, sender.ID, sender.Username, sender.FirstName, sender.LanguageCode)
 			if err != nil {
@@ -139,8 +172,8 @@ func (b *Bot) registerHandlers() {
 
 func (b *Bot) handleStart(c tele.Context) error {
 	userID := c.Sender().ID
-	delete(b.States, userID)
-	return c.Send("💰 *YNAB Bot*\n\nTrack your expenses like a pro.", mainMenu())
+	b.clearState(userID)
+	return c.Send("💰 *Kaptl* — expense tracker\n\nTrack your spending like a pro.", mainMenu())
 }
 
 func (b *Bot) handleHelp(c tele.Context) error {
@@ -194,7 +227,7 @@ func (b *Bot) catAdd(c tele.Context, args []string) error {
 	}
 	name := strings.Join(rest, " ")
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 	cat, err := b.DB.CreateCategory(ctx, c.Sender().ID, name, emoji)
 	if err != nil {
 		return c.Send("❌ Category already exists or error occurred.", mainMenu())
@@ -208,7 +241,7 @@ func (b *Bot) catRemove(c tele.Context, args []string) error {
 	}
 	name := strings.Join(args, " ")
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 	cats, _ := b.DB.GetCategories(ctx, c.Sender().ID)
 	for _, cat := range cats {
 		if strings.EqualFold(cat.Name, name) {
@@ -255,7 +288,7 @@ func (b *Bot) accAdd(c tele.Context, args []string) error {
 		return c.Send("Invalid type. Use: checking, savings, cash, credit_card", mainMenu())
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 	acc, err := b.DB.CreateAccount(ctx, c.Sender().ID, name, accType, "UAH", 0)
 	if err != nil {
 		return c.Send("❌ Error creating account. Does it already exist?", mainMenu())
@@ -295,7 +328,7 @@ func (b *Bot) handleBudget(c tele.Context) error {
 
 	catName := strings.Join(args[1:len(args)-1], " ")
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 	cats, _ := b.DB.GetCategories(ctx, c.Sender().ID)
 	for _, cat := range cats {
 		if strings.EqualFold(cat.Name, catName) {
@@ -314,7 +347,7 @@ func (b *Bot) handleBudget(c tele.Context) error {
 
 func (b *Bot) handleAddExpense(c tele.Context) error {
 	userID := c.Sender().ID
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
 	cats, err := b.DB.GetCategories(ctx, userID)
 	if err != nil || len(cats) == 0 {
@@ -328,7 +361,7 @@ func (b *Bot) handleAddExpense(c tele.Context) error {
 
 func (b *Bot) handleAddIncome(c tele.Context) error {
 	userID := c.Sender().ID
-	b.States[userID] = &userState{Step: "awaiting_income_amount", TxType: "income"}
+	b.setState(userID, &userState{Step: "awaiting_income_amount", TxType: "income"})
 
 	return c.Send("*Enter the income amount:*\n\nJust type a number, e.g. `1500`", cancelBtn())
 }
@@ -337,7 +370,7 @@ func (b *Bot) handleAddIncome(c tele.Context) error {
 
 func (b *Bot) handleSummary(c tele.Context) error {
 	userID := c.Sender().ID
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
 	cats, err := b.DB.GetBudgetSummary(ctx, userID)
 	if err != nil {
@@ -370,7 +403,7 @@ func (b *Bot) handleSummary(c tele.Context) error {
 
 func (b *Bot) handleAccounts(c tele.Context) error {
 	userID := c.Sender().ID
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
 	accs, err := b.DB.GetAccounts(ctx, userID)
 	if err != nil {
@@ -383,18 +416,7 @@ func (b *Bot) handleAccounts(c tele.Context) error {
 
 	var lines []string
 	for _, a := range accs {
-		emoji := "💳"
-		switch a.Type {
-		case "cash":
-			emoji = "💵"
-		case "savings":
-			emoji = "🏦"
-		case "credit_card":
-			emoji = "💳"
-		default:
-			emoji = "🏛️"
-		}
-		lines = append(lines, fmt.Sprintf("%s *%s*: %.2f %s", emoji, a.Name, a.Balance, a.Currency))
+		lines = append(lines, fmt.Sprintf("%s *%s*: %.2f %s", accountEmoji(a.Type), a.Name, a.Balance, a.Currency))
 	}
 
 	return c.Send("💰 *Accounts*\n\n"+strings.Join(lines, "\n")+"\n\n_Add:_ `/acc add Name type`", mainMenu())
@@ -404,7 +426,7 @@ func (b *Bot) handleAccounts(c tele.Context) error {
 
 func (b *Bot) handleCategories(c tele.Context) error {
 	userID := c.Sender().ID
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
 	cats, err := b.DB.GetCategories(ctx, userID)
 	if err != nil {
@@ -428,7 +450,7 @@ func (b *Bot) handleCategories(c tele.Context) error {
 
 func (b *Bot) handleBudgetMenu(c tele.Context) error {
 	userID := c.Sender().ID
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
 	cats, err := b.DB.GetCategories(ctx, userID)
 	if err != nil || len(cats) == 0 {
@@ -467,7 +489,7 @@ func (b *Bot) handleBudgetMenu(c tele.Context) error {
 
 func (b *Bot) handleRecent(c tele.Context) error {
 	userID := c.Sender().ID
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
 	txs, err := b.DB.GetRecentTransactions(ctx, userID, 10)
 	if err != nil {
@@ -501,7 +523,7 @@ func (b *Bot) handleRecent(c tele.Context) error {
 
 func (b *Bot) handleCancel(c tele.Context) error {
 	userID := c.Sender().ID
-	delete(b.States, userID)
+	b.clearState(userID)
 	return c.Send("❌ Cancelled.", mainMenu())
 }
 
@@ -510,7 +532,7 @@ func (b *Bot) handleCancel(c tele.Context) error {
 func (b *Bot) handleText(c tele.Context) error {
 	userID := c.Sender().ID
 
-	state, inWizard := b.States[userID]
+	state, inWizard := b.stateFor(userID), b.stateFor(userID) != nil
 	if !inWizard {
 		return c.Send("Tap a button or use `/menu`", mainMenu())
 	}
@@ -543,7 +565,7 @@ func (b *Bot) receiveAmount(c tele.Context, state *userState) error {
 	state.Step = "awaiting_account"
 
 	userID := c.Sender().ID
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 	accs, err := b.DB.GetAccounts(ctx, userID)
 	if err != nil || len(accs) == 0 {
 		return c.Send("No accounts! Create one with `/acc add Name type`", mainMenu())
@@ -557,7 +579,7 @@ func (b *Bot) receiveAmount(c tele.Context, state *userState) error {
 func (b *Bot) receiveAccount(c tele.Context, state *userState) error {
 	accountName := c.Text()
 	userID := c.Sender().ID
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
 	accs, _ := b.DB.GetAccounts(ctx, userID)
 	var acc *models.Account
@@ -576,7 +598,7 @@ func (b *Bot) receiveAccount(c tele.Context, state *userState) error {
 		return c.Send("❌ Error saving transaction. Try again.", mainMenu())
 	}
 
-	delete(b.States, userID)
+	b.clearState(userID)
 
 	catName := ""
 	cats, _ := b.DB.GetCategories(ctx, userID)
@@ -604,7 +626,7 @@ func (b *Bot) receiveIncomeAmount(c tele.Context, state *userState) error {
 	state.Step = "awaiting_income_account"
 
 	userID := c.Sender().ID
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 	accs, err := b.DB.GetAccounts(ctx, userID)
 	if err != nil || len(accs) == 0 {
 		return c.Send("No accounts! Create one with `/acc add Name type`", mainMenu())
@@ -618,7 +640,7 @@ func (b *Bot) receiveIncomeAmount(c tele.Context, state *userState) error {
 func (b *Bot) receiveIncomeAccount(c tele.Context, state *userState) error {
 	accountName := c.Text()
 	userID := c.Sender().ID
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
 	accs, _ := b.DB.GetAccounts(ctx, userID)
 	var acc *models.Account
@@ -637,7 +659,7 @@ func (b *Bot) receiveIncomeAccount(c tele.Context, state *userState) error {
 		return c.Send("❌ Error saving income. Try again.", mainMenu())
 	}
 
-	delete(b.States, userID)
+	b.clearState(userID)
 	msg := fmt.Sprintf("✅ Income: +*%.2f* on *%s*\n_%s_",
 		tx.Amount, acc.Name, tx.CreatedAt.Format("Jan 2 15:04"))
 	return c.Send(msg, mainMenu())
@@ -651,7 +673,7 @@ func (b *Bot) receiveBudgetAmount(c tele.Context, state *userState) error {
 		return c.Send("Please enter a valid number, e.g. `5000`", cancelBtn())
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 	month := time.Now().Format("2006-01") + "-01"
 
 	_, err = b.DB.SetBudget(ctx, c.Sender().ID, state.EditingBudget, month, amount)
@@ -659,7 +681,7 @@ func (b *Bot) receiveBudgetAmount(c tele.Context, state *userState) error {
 		return c.Send("❌ Error saving budget. Try again.", mainMenu())
 	}
 
-	delete(b.States, c.Sender().ID)
+	b.clearState(c.Sender().ID)
 
 	cats, _ := b.DB.GetCategories(ctx, c.Sender().ID)
 	catName := "category"
@@ -680,7 +702,7 @@ func (b *Bot) receiveBudgetAmount(c tele.Context, state *userState) error {
 func (b *Bot) handleCallback(c tele.Context) error {
 	data := c.Callback().Data
 	userID := c.Sender().ID
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout); defer cancel()
 
 	// Always acknowledge the callback so Telegram stops the spinner.
 	// Specific handlers below override this with their own response.
@@ -690,7 +712,7 @@ func (b *Bot) handleCallback(c tele.Context) error {
 
 	switch prefix {
 	case cbCancel:
-		delete(b.States, userID)
+		b.clearState(userID)
 		return c.Edit("❌ Cancelled.", mainMenu())
 
 	case cbCat:
@@ -699,11 +721,11 @@ func (b *Bot) handleCallback(c tele.Context) error {
 			return c.Respond(&tele.CallbackResponse{Text: "Invalid category"})
 		}
 
-		b.States[userID] = &userState{
+		b.setState(userID, &userState{
 			Step:       "awaiting_amount",
 			CategoryID: catID,
 			TxType:     "expense",
-		}
+		})
 
 		cats, _ := b.DB.GetCategories(ctx, userID)
 		for _, cat := range cats {
@@ -719,10 +741,10 @@ func (b *Bot) handleCallback(c tele.Context) error {
 			return c.Respond(&tele.CallbackResponse{Text: "Invalid category"})
 		}
 
-		b.States[userID] = &userState{
+		b.setState(userID, &userState{
 			Step:          "awaiting_budget_amount",
 			EditingBudget: catID,
-		}
+		})
 
 		cats, _ := b.DB.GetCategories(ctx, userID)
 		for _, cat := range cats {
@@ -738,7 +760,7 @@ func (b *Bot) handleCallback(c tele.Context) error {
 			return c.Respond(&tele.CallbackResponse{Text: "Invalid account"})
 		}
 
-		state, ok := b.States[userID]
+		state := b.stateFor(userID); ok := state != nil
 		if !ok {
 			return c.Respond(&tele.CallbackResponse{Text: "No active operation"})
 		}
@@ -754,7 +776,7 @@ func (b *Bot) handleCallback(c tele.Context) error {
 			if err != nil {
 				return c.Edit("❌ Error saving transaction. Try again.", mainMenu())
 			}
-			delete(b.States, userID)
+			b.clearState(userID)
 
 			catName := ""
 			cats, _ := b.DB.GetCategories(ctx, userID)
@@ -773,7 +795,7 @@ func (b *Bot) handleCallback(c tele.Context) error {
 			if err != nil {
 				return c.Edit("❌ Error saving income. Try again.", mainMenu())
 			}
-			delete(b.States, userID)
+			b.clearState(userID)
 
 			return c.Edit(fmt.Sprintf("✅ Income: +*%.2f* on *%s*\n_%s_",
 				tx.Amount, acc.Name, tx.CreatedAt.Format("Jan 2 15:04")), mainMenu())

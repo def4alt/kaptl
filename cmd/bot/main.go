@@ -44,6 +44,6 @@ func main() {
 		b.Tele.Stop()
 	}()
 
-	log.Println("🤖 YNAB Bot is running...")
+	log.Println("🤖 Kaptl bot is running...")
 	b.Start()
 }

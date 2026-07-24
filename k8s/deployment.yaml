@@ -1,39 +1,39 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ynab-bot
-  namespace: default
+  name: kaptl
+  namespace: kaptl
   labels:
-    app: ynab-bot
+    app: kaptl
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: ynab-bot
+      app: kaptl
   template:
     metadata:
       labels:
-        app: ynab-bot
+        app: kaptl
     spec:
       containers:
         - name: bot
-          image: ghcr.io/andrii/ynab-bot:latest
+          image: ghcr.io/def4alt/kaptl:latest
           imagePullPolicy: Always
           env:
             - name: TELEGRAM_BOT_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: ynab-bot-secret
+                  name: kaptl-bot-secrets
                   key: telegram-bot-token
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: ynab-bot-secret
+                  name: kaptl-bot-secrets
                   key: database-url
             - name: ALLOWED_TELEGRAM_ID
               valueFrom:
                 secretKeyRef:
-                  name: ynab-bot-secret
+                  name: kaptl-bot-secrets
                   key: allowed-telegram-id
           resources:
             requests:
@@ -46,6 +46,6 @@ spec:
             exec:
               command:
                 - pgrep
-                - ynab-bot
+                - kaptl
             initialDelaySeconds: 10
             periodSeconds: 30

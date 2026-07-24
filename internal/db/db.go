@@ -18,11 +18,11 @@ func New(ctx context.Context) (*DB, error) {
 	if dsn == "" {
 		dsn = fmt.Sprintf(
 			"postgres://%s:%s@%s:%s/%s?sslmode=disable",
-			getEnv("DB_USER", "ynab"),
-			getEnv("DB_PASSWORD", "ynab"),
+			getEnv("DB_USER", "kaptl"),
+			getEnv("DB_PASSWORD", "kaptl"),
 			getEnv("DB_HOST", "localhost"),
 			getEnv("DB_PORT", "5432"),
-			getEnv("DB_NAME", "ynab"),
+			getEnv("DB_NAME", "kaptl"),
 		)
 	}
 

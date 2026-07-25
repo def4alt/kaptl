@@ -771,29 +771,28 @@ func TestManageNavigationSendsNewMessagesAndAcknowledgesCallbacks(t *testing.T) 
 	// /menu sends one message
 	processUpdate(b, textUpdate("/menu"))
 
-	// Each button tap sends a new message + acknowledges callback
+	// Button taps edit the existing message + acknowledge callback
 	clickButton(t, b, recorder, "⚙️ Manage")
-	assertContains(t, recorder.lastText(t, "/sendMessage"), "Manage")
+	assertContains(t, recorder.lastText(t, "/editMessageText"), "Manage")
 
 	clickButton(t, b, recorder, "🏷️ Categories")
-	assertContains(t, recorder.lastText(t, "/sendMessage"), "/cat add")
+	assertContains(t, recorder.lastText(t, "/editMessageText"), "/cat add")
 
 	clickButton(t, b, recorder, "◀ Back")
-	assertContains(t, recorder.lastText(t, "/sendMessage"), "Manage")
+	assertContains(t, recorder.lastText(t, "/editMessageText"), "Manage")
 
 	clickButton(t, b, recorder, "◀ Back")
-	assertContains(t, recorder.lastText(t, "/sendMessage"), "Kaptl")
+	assertContains(t, recorder.lastText(t, "/editMessageText"), "Kaptl")
 
-	// Total: 1 /menu + 4 button sends = 5 messages
-	if got := recorder.callCount("/sendMessage"); got != 5 {
-		t.Fatalf("expected 5 sendMessage calls, got %d", got)
+	// 1 /menu send + 4 button edits
+	if got := recorder.callCount("/sendMessage"); got != 1 {
+		t.Fatalf("expected 1 sendMessage (/menu), got %d", got)
 	}
 	if got := recorder.callCount("/answerCallbackQuery"); got != 4 {
 		t.Fatalf("expected 4 acknowledged callbacks, got %d", got)
 	}
-	// No edits at all
-	if got := recorder.callCount("/editMessageText"); got != 0 {
-		t.Fatalf("expected 0 edits, got %d", got)
+	if got := recorder.callCount("/editMessageText"); got != 4 {
+		t.Fatalf("expected 4 edits (callback navigation), got %d", got)
 	}
 }
 
@@ -808,7 +807,7 @@ func TestExpenseBackChangesCategoryBeforeSaving(t *testing.T) {
 	clickButton(t, b, recorder, "🍞 Food")
 	processUpdate(b, textUpdate("42.50"))
 	clickButton(t, b, recorder, "◀ Back")
-	assertContains(t, recorder.lastText(t, "/sendMessage"), "Pick a category")
+	assertContains(t, recorder.lastText(t, "/editMessageText"), "Pick a category")
 
 	clickButton(t, b, recorder, "🚗 Travel")
 	processUpdate(b, textUpdate("42.50"))
@@ -836,7 +835,7 @@ func TestMoveBackChangesSourceBeforeSaving(t *testing.T) {
 	clickButton(t, b, recorder, "🔀 Move")
 	clickButton(t, b, recorder, "💳 Mono")
 	clickButton(t, b, recorder, "◀ Back")
-	assertContains(t, recorder.lastText(t, "/sendMessage"), "From: —")
+	assertContains(t, recorder.lastText(t, "/editMessageText"), "From: —")
 
 	clickButton(t, b, recorder, "💵 Cash")
 	clickButton(t, b, recorder, "💳 Mono")

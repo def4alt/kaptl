@@ -59,6 +59,9 @@ func withCallbackAck(handler tele.HandlerFunc) tele.HandlerFunc {
 
 func (b *Bot) handleStart(c tele.Context) error {
 	b.clearState(c.Sender().ID)
+	if c.Callback() != nil {
+		return c.Edit(view.Welcome(), mainMenu())
+	}
 	return c.Send(view.Welcome(), mainMenu())
 }
 

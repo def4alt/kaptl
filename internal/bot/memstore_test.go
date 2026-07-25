@@ -66,8 +66,10 @@ func (m *memStore) GetAccounts(ctx context.Context, userID int64) ([]models.Acco
 			for _, t := range m.transactions {
 				if t.AccountID == a.ID {
 					switch t.Type {
-					case "income": balance += t.Amount
-					case "expense", "transfer": balance -= t.Amount
+					case "income":
+						balance += t.Amount
+					case "expense", "transfer":
+						balance -= t.Amount
 					}
 				}
 				if t.TransferAccountID != nil && *t.TransferAccountID == a.ID {

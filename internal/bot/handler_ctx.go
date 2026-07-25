@@ -39,10 +39,6 @@ func (h *hctx) send(text string) error {
 	return h.C.Send(text, mainMenu())
 }
 
-func (h *hctx) edit(text string, markup *tele.ReplyMarkup) error {
-	return h.C.Edit(text, markup)
-}
-
 // ─── Entity accessors ─────────────────────────────────────
 
 // cats returns all categories for the current user.

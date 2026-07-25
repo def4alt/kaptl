@@ -61,19 +61,19 @@ type BudgetRow struct {
 }
 
 type Transaction struct {
-	ID                int64      `json:"id"`
-	UserID            int64      `json:"user_id"`
-	AccountID         int64      `json:"account_id"`
-	CategoryID        *int64     `json:"category_id,omitempty"`
-	Type              string     `json:"type"` // expense, income, transfer
-	Amount            float64    `json:"amount"`
-	TransferAccountID *int64     `json:"transfer_account_id,omitempty"`
-	Description       string     `json:"description,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
+	ID                int64     `json:"id"`
+	UserID            int64     `json:"user_id"`
+	AccountID         int64     `json:"account_id"`
+	CategoryID        *int64    `json:"category_id,omitempty"`
+	Type              string    `json:"type"` // expense, income, transfer
+	Amount            float64   `json:"amount"`
+	TransferAccountID *int64    `json:"transfer_account_id,omitempty"`
+	Description       string    `json:"description,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
 	// Joined
-	CategoryName      string     `json:"category_name,omitempty"`
-	CategoryEmoji     string     `json:"category_emoji,omitempty"`
-	AccountName       string     `json:"account_name,omitempty"`
+	CategoryName  string `json:"category_name,omitempty"`
+	CategoryEmoji string `json:"category_emoji,omitempty"`
+	AccountName   string `json:"account_name,omitempty"`
 }
 
 type Budget struct {

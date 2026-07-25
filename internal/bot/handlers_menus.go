@@ -12,19 +12,19 @@ import (
 // ─── Menus ─────────────────────────────────────────────────
 
 func (b *Bot) handleManageMenu(c tele.Context) error {
-	return c.Edit("⚙️ *Manage*", manageMenu())
+	return c.Send("⚙️ *Manage*", manageMenu())
 }
 
 func (b *Bot) handleManageCats(c tele.Context) error {
 	h := b.withCtx(c)
 	defer h.done()
-	return c.Edit(view.Categories(h.cats(), h.groups()), manageCategoryMenu())
+	return c.Send(view.Categories(h.cats(), h.groups()), manageCategoryMenu())
 }
 
 func (b *Bot) handleManageAccs(c tele.Context) error {
 	h := b.withCtx(c)
 	defer h.done()
-	return c.Edit(view.Accounts(h.accs()), manageAccountMenu())
+	return c.Send(view.Accounts(h.accs()), manageAccountMenu())
 }
 
 func (b *Bot) handleManageBuds(c tele.Context) error { return b.handleBudgetMenu(c) }
@@ -32,7 +32,7 @@ func (b *Bot) handleManageBuds(c tele.Context) error { return b.handleBudgetMenu
 func (b *Bot) handleManageGrps(c tele.Context) error {
 	h := b.withCtx(c)
 	defer h.done()
-	return c.Edit(view.Groups(h.groups()), manageGroupMenu())
+	return c.Send(view.Groups(h.groups()), manageGroupMenu())
 }
 
 // ─── Summary / Recent ─────────────────────────────────────
@@ -42,23 +42,23 @@ func (b *Bot) handleSummary(c tele.Context) error {
 	defer h.done()
 	rows, _ := h.Bot.Store.GetBudgetSummary(h.DB, h.UID, 0)
 	if len(rows) == 0 {
-		return c.Edit("No categories yet. Use `/cat add 🍞 Name`.", mainMenu())
+		return c.Send("No categories yet. Use `/cat add 🍞 Name`.", mainMenu())
 	}
 	rta, _ := h.Bot.Store.GetReadyToAssign(h.DB, h.UID)
-	return c.Edit(view.Summary(rows, rta), mainMenu())
+	return c.Send(view.Summary(rows, rta), mainMenu())
 }
 
 func (b *Bot) handleRecent(c tele.Context) error {
 	h := b.withCtx(c)
 	defer h.done()
 	txs, _ := h.Bot.Store.GetRecentTransactions(h.DB, h.UID, 10)
-	return c.Edit(view.Recent(txs), mainMenu())
+	return c.Send(view.Recent(txs), mainMenu())
 }
 
 func (b *Bot) handleDynamicCancel(c tele.Context) error {
 	defer c.Respond()
 	b.clearState(c.Sender().ID)
-	return c.Edit("❌ Cancelled.", mainMenu())
+	return c.Send("❌ Cancelled.", mainMenu())
 }
 
 // ─── Back button ──────────────────────────────────────────
@@ -68,19 +68,19 @@ func (b *Bot) handleBackBtn(c tele.Context) error {
 	defer c.Respond()
 	state := b.stateFor(uid)
 	if state == nil {
-		return c.Edit("No active operation.", mainMenu())
+		return c.Send("No active operation.", mainMenu())
 	}
 
 	switch state.Back {
 	case BackExpenseCategory:
 		h := b.withCtx(c)
 		defer h.done()
-		return c.Edit("*Pick a category:*", categoryKeyboard(h.cats()))
+		return c.Send("*Pick a category:*", categoryKeyboard(h.cats()))
 	case BackMoveSource:
 		h := b.withCtx(c)
 		defer h.done()
 		state.Step = StepMoveSource
-		return c.Edit("🔀 *Transfer*\n\nFrom: —\nTo: —\nAmount: —", accountKeyboard(h.accs(), false))
+		return c.Send("🔀 *Transfer*\n\nFrom: —\nTo: —\nAmount: —", accountKeyboard(h.accs(), false))
 	}
 	return c.Respond(&tele.CallbackResponse{Text: "Can't go back"})
 }
@@ -99,21 +99,21 @@ func (b *Bot) handleEmojiPick(c tele.Context) error {
 			Step:   StepCreateEmoji,
 			MsgID:  c.Message().ID, ChatID: c.Chat().ID,
 		})
-		return c.Edit("🏷️ *New Category*\n\nEmoji: —\nName: —\nGroup: —\n\n_Pick an emoji:_", emojiKeyboard())
+		return c.Send("🏷️ *New Category*\n\nEmoji: —\nName: —\nGroup: —\n\n_Pick an emoji:_", emojiKeyboard())
 	case actionNewAccount:
 		b.setState(uid, &userState{
 			Wizard: CreationWizard{Kind: CreateAccount},
 			Step:   StepCreateEmoji,
 			MsgID:  c.Message().ID, ChatID: c.Chat().ID,
 		})
-		return c.Edit("💰 *New Account*\n\nEmoji: —\nName: —\nCurrency: —\n\n_Pick an emoji:_", emojiKeyboard())
+		return c.Send("💰 *New Account*\n\nEmoji: —\nName: —\nCurrency: —\n\n_Pick an emoji:_", emojiKeyboard())
 	case actionNewGroup:
 		b.setState(uid, &userState{
 			Wizard: CreationWizard{Kind: CreateGroup},
 			Step:   StepCreateEmoji,
 			MsgID:  c.Message().ID, ChatID: c.Chat().ID,
 		})
-		return c.Edit("📁 *New Group*\n\nEmoji: —\nName: —\n\n_Pick an emoji:_", emojiKeyboard())
+		return c.Send("📁 *New Group*\n\nEmoji: —\nName: —\n\n_Pick an emoji:_", emojiKeyboard())
 	default:
 		state := b.stateFor(uid)
 		if state == nil {
@@ -124,7 +124,7 @@ func (b *Bot) handleEmojiPick(c tele.Context) error {
 		state.Wizard = w
 		state.Step = StepCreateName
 
-		return c.Edit(fmt.Sprintf("Emoji: %s\n\n_Type the name:_", data), cancelBtn())
+		return c.Send(fmt.Sprintf("Emoji: %s\n\n_Type the name:_", data), cancelBtn())
 	}
 }
 
@@ -178,10 +178,10 @@ func (b *Bot) handleCurrencyPick(c tele.Context) error {
 	defer h.done()
 	acc, err := h.Bot.Store.CreateAccount(h.DB, uid, w.Name, w.Emoji, currency, 0)
 	if err != nil {
-		return h.edit(view.Error("Error creating account."), manageMenu())
+		return h.send(view.Error("Error creating account."))
 	}
 	b.clearState(uid)
-	return h.edit(fmt.Sprintf("✅ Created: %s *%s* (%s)", acc.Emoji, acc.Name, acc.Currency), manageMenu())
+	return h.send(fmt.Sprintf("✅ Created: %s *%s* (%s)", acc.Emoji, acc.Name, acc.Currency))
 }
 
 func (b *Bot) handleIntervalPick(c tele.Context) error {
@@ -199,10 +199,10 @@ func (b *Bot) handleIntervalPick(c tele.Context) error {
 	defer h.done()
 	bd, err := h.Bot.Store.SetBudget(h.DB, uid, w.CategoryID, d, m, w.Amount)
 	if err != nil {
-		return h.edit(view.Error("Error saving budget."), manageMenu())
+		return h.send(view.Error("Error saving budget."))
 	}
 	b.clearState(uid)
-	return h.edit(fmt.Sprintf("✅ Budget: %s *%.0f* (%s)", view.CatName(h.cats(), w.CategoryID), w.Amount, bd.Description()), manageMenu())
+	return h.send(fmt.Sprintf("✅ Budget: %s *%.0f* (%s)", view.CatName(h.cats(), w.CategoryID), w.Amount, bd.Description()))
 }
 
 func (b *Bot) handleGroupPick(c tele.Context) error {
@@ -225,8 +225,8 @@ func (b *Bot) handleGroupPick(c tele.Context) error {
 	defer h.done()
 	cat, err := h.Bot.Store.CreateCategory(h.DB, uid, w.Name, w.Emoji, w.CatGroup)
 	if err != nil {
-		return h.edit(view.Error("Category already exists."), manageMenu())
+		return h.send(view.Error("Category already exists."))
 	}
 	b.clearState(uid)
-	return h.edit(view.Created(cat.Emoji, cat.Name, ""), manageMenu())
+	return h.send(view.Created(cat.Emoji, cat.Name, ""))
 }

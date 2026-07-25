@@ -242,9 +242,9 @@ func Budgets(cats []models.Category, budgets []models.Budget) string {
 		reset := bd.PeriodStart.AddDate(0, bd.IntervalMonths, bd.IntervalDays).Format("Jan 2")
 
 		b.WriteString(fmt.Sprintf("\n┌%s┐\n", strings.Repeat("─", w+2)))
-		b.WriteString(fmt.Sprintf("│ %s %s%s │\n", c.Emoji, c.Name, strings.Repeat(" ", max(0, w-len(c.Emoji)-len(c.Name)-2))))
-		b.WriteString(fmt.Sprintf("│   %s %s%s │\n", amount, interval, strings.Repeat(" ", max(0, w-len(amount)-len(interval)-4))))
-		b.WriteString(fmt.Sprintf("│   Resets: %s%s │\n", reset, strings.Repeat(" ", max(0, w-len(reset)-11))))
+		b.WriteString(fmt.Sprintf("│ %s %s%s │\n", c.Emoji, c.Name, strings.Repeat(" ", max(0, w-len(c.Emoji)-len(c.Name)-1))))
+		b.WriteString(fmt.Sprintf("│   %s %s%s │\n", amount, interval, strings.Repeat(" ", max(0, w-len(amount)-len(interval)-3))))
+		b.WriteString(fmt.Sprintf("│   Resets: %s%s │\n", reset, strings.Repeat(" ", max(0, w-len(reset)-10))))
 		b.WriteString(fmt.Sprintf("└%s┘", strings.Repeat("─", w+2)))
 	}
 
@@ -283,18 +283,18 @@ func Recent(txs []models.Transaction) string {
 
 		b.WriteString(fmt.Sprintf("\n┌%s┐\n", strings.Repeat("─", w+2)))
 		header := fmt.Sprintf("%s %s", sign, amount)
-		b.WriteString(fmt.Sprintf("│ %s%s │\n", header, strings.Repeat(" ", max(0, w-len(header)-1))))
+		b.WriteString(fmt.Sprintf("│ %s%s │\n", header, strings.Repeat(" ", max(0, w-len(header)))))
 
 		if t.CategoryEmoji != "" {
 			cat := fmt.Sprintf("%s %s", t.CategoryEmoji, t.CategoryName)
-			b.WriteString(fmt.Sprintf("│ %s%s │\n", cat, strings.Repeat(" ", max(0, w-len(cat)-1))))
+			b.WriteString(fmt.Sprintf("│ %s%s │\n", cat, strings.Repeat(" ", max(0, w-len(cat)))))
 		}
 		if t.Type == "transfer" && t.Description != "" {
-			b.WriteString(fmt.Sprintf("│ %s%s │\n", t.Description, strings.Repeat(" ", max(0, w-len(t.Description)-1))))
+			b.WriteString(fmt.Sprintf("│ %s%s │\n", t.Description, strings.Repeat(" ", max(0, w-len(t.Description)))))
 		}
 
 		footer := fmt.Sprintf("%s · %s", t.AccountName, t.CreatedAt.Format("Jan 2 15:04"))
-		b.WriteString(fmt.Sprintf("│ %s%s │\n", footer, strings.Repeat(" ", max(0, w-len(footer)-1))))
+		b.WriteString(fmt.Sprintf("│ %s%s │\n", footer, strings.Repeat(" ", max(0, w-len(footer)))))
 		b.WriteString(fmt.Sprintf("└%s┘", strings.Repeat("─", w+2)))
 	}
 

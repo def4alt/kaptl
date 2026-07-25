@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/def4alt/kaptl/internal/models"
 )
@@ -143,6 +144,11 @@ func formatAmount(v float64) string {
 	return "€" + string(result)
 }
 
+// runeLen returns the visual character count (runes, not bytes).
+func runeLen(s string) int {
+	return utf8.RuneCountInString(s)
+}
+
 func padTo(s string, width int) string {
 	if len(s) >= width {
 		return s
@@ -242,9 +248,9 @@ func Budgets(cats []models.Category, budgets []models.Budget) string {
 		reset := bd.PeriodStart.AddDate(0, bd.IntervalMonths, bd.IntervalDays).Format("Jan 2")
 
 		b.WriteString(fmt.Sprintf("\n┌%s┐\n", strings.Repeat("─", w+2)))
-		b.WriteString(fmt.Sprintf("│ %s %s%s │\n", c.Emoji, c.Name, strings.Repeat(" ", max(0, w-len(c.Emoji)-len(c.Name)-1))))
-		b.WriteString(fmt.Sprintf("│   %s %s%s │\n", amount, interval, strings.Repeat(" ", max(0, w-len(amount)-len(interval)-3))))
-		b.WriteString(fmt.Sprintf("│   Resets: %s%s │\n", reset, strings.Repeat(" ", max(0, w-len(reset)-10))))
+		b.WriteString(fmt.Sprintf("│ %s %s%s │\n", c.Emoji, c.Name, strings.Repeat(" ", max(0, w-runeLen(c.Emoji)-runeLen(c.Name)-1))))
+		b.WriteString(fmt.Sprintf("│   %s %s%s │\n", amount, interval, strings.Repeat(" ", max(0, w-runeLen(amount)-runeLen(interval)-3))))
+		b.WriteString(fmt.Sprintf("│   Resets: %s%s │\n", reset, strings.Repeat(" ", max(0, w-runeLen(reset)-10))))
 		b.WriteString(fmt.Sprintf("└%s┘", strings.Repeat("─", w+2)))
 	}
 
@@ -283,18 +289,18 @@ func Recent(txs []models.Transaction) string {
 
 		b.WriteString(fmt.Sprintf("\n┌%s┐\n", strings.Repeat("─", w+2)))
 		header := fmt.Sprintf("%s %s", sign, amount)
-		b.WriteString(fmt.Sprintf("│ %s%s │\n", header, strings.Repeat(" ", max(0, w-len(header)))))
+		b.WriteString(fmt.Sprintf("│ %s%s │\n", header, strings.Repeat(" ", max(0, w-runeLen(header)))))
 
 		if t.CategoryEmoji != "" {
 			cat := fmt.Sprintf("%s %s", t.CategoryEmoji, t.CategoryName)
-			b.WriteString(fmt.Sprintf("│ %s%s │\n", cat, strings.Repeat(" ", max(0, w-len(cat)))))
+			b.WriteString(fmt.Sprintf("│ %s%s │\n", cat, strings.Repeat(" ", max(0, w-runeLen(cat)))))
 		}
 		if t.Type == "transfer" && t.Description != "" {
-			b.WriteString(fmt.Sprintf("│ %s%s │\n", t.Description, strings.Repeat(" ", max(0, w-len(t.Description)))))
+			b.WriteString(fmt.Sprintf("│ %s%s │\n", t.Description, strings.Repeat(" ", max(0, w-runeLen(t.Description)))))
 		}
 
 		footer := fmt.Sprintf("%s · %s", t.AccountName, t.CreatedAt.Format("Jan 2 15:04"))
-		b.WriteString(fmt.Sprintf("│ %s%s │\n", footer, strings.Repeat(" ", max(0, w-len(footer)))))
+		b.WriteString(fmt.Sprintf("│ %s%s │\n", footer, strings.Repeat(" ", max(0, w-runeLen(footer)))))
 		b.WriteString(fmt.Sprintf("└%s┘", strings.Repeat("─", w+2)))
 	}
 

@@ -162,10 +162,11 @@ func max(a, b int) int {
 }
 
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	if runeLen(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen-1] + "…"
+	runes := []rune(s)
+	return string(runes[:maxLen-1]) + "…"
 }
 
 func padRight(s string, n int) string {

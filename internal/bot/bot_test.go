@@ -1,63 +1,180 @@
 package bot
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/def4alt/kaptl/internal/models"
 	tele "gopkg.in/telebot.v4"
 )
 
-// testServer is a shared httptest server emulating Telegram's API.
-var testServer *httptest.Server
-
-func TestMain(m *testing.M) {
-	testServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		// Return appropriate shape for different API methods
-		path := r.URL.Path
-		switch {
-		case strings.Contains(path, "/getMe"):
-			w.Write([]byte(`{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"test","username":"test_bot","can_join_groups":true,"can_read_all_group_messages":true,"supports_inline_queries":true}}`))
-		case strings.Contains(path, "/sendMessage") || strings.Contains(path, "/editMessageText"):
-			w.Write([]byte(`{"ok":true,"result":{"message_id":1,"chat":{"id":303330553},"from":{"id":1,"is_bot":true,"first_name":"test","username":"test_bot"}}}`))
-		default:
-			w.Write([]byte(`{"ok":true,"result":true}`))
-		}
-	}))
-	defer testServer.Close()
-	os.Exit(m.Run())
+type apiCall struct {
+	Path        string
+	Text        string
+	ReplyMarkup json.RawMessage
 }
 
-// testBot creates a bot wired to an in-memory store for testing.
-func testBot(t *testing.T) (*Bot, *memStore) {
+type telegramRecorder struct {
+	mu    sync.Mutex
+	calls []apiCall
+}
+
+func newTestTelegramServer(t *testing.T) (*httptest.Server, *telegramRecorder) {
 	t.Helper()
+	recorder := &telegramRecorder{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recorder.record(r)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "/getMe"):
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"id":1,"is_bot":true,"first_name":"test","username":"test_bot","can_join_groups":true,"can_read_all_group_messages":true,"supports_inline_queries":true}}`))
+		case strings.Contains(r.URL.Path, "/sendMessage"), strings.Contains(r.URL.Path, "/editMessageText"):
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":1,"chat":{"id":303330553},"from":{"id":1,"is_bot":true,"first_name":"test","username":"test_bot"}}}`))
+		default:
+			_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server, recorder
+}
+
+func (r *telegramRecorder) record(req *http.Request) {
+	body, _ := io.ReadAll(req.Body)
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	_ = req.ParseMultipartForm(1 << 20)
+	_ = req.ParseForm()
+
+	call := apiCall{Path: req.URL.Path, Text: req.Form.Get("text")}
+	if raw := req.Form.Get("reply_markup"); raw != "" {
+		call.ReplyMarkup = json.RawMessage(raw)
+	}
+	if len(body) > 0 {
+		var payload struct {
+			Text        string          `json:"text"`
+			ReplyMarkup json.RawMessage `json:"reply_markup"`
+		}
+		if json.Unmarshal(body, &payload) == nil {
+			if call.Text == "" {
+				call.Text = payload.Text
+			}
+			if len(call.ReplyMarkup) == 0 {
+				call.ReplyMarkup = payload.ReplyMarkup
+			}
+		}
+	}
+	if len(call.ReplyMarkup) > 0 && call.ReplyMarkup[0] == '"' {
+		var encoded string
+		if json.Unmarshal(call.ReplyMarkup, &encoded) == nil {
+			call.ReplyMarkup = json.RawMessage(encoded)
+		}
+	}
+
+	r.mu.Lock()
+	r.calls = append(r.calls, call)
+	r.mu.Unlock()
+}
+
+func (r *telegramRecorder) reset() {
+	r.mu.Lock()
+	r.calls = nil
+	r.mu.Unlock()
+}
+
+func (r *telegramRecorder) callCount(pathSuffix string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	count := 0
+	for _, call := range r.calls {
+		if strings.HasSuffix(call.Path, pathSuffix) {
+			count++
+		}
+	}
+	return count
+}
+
+func (r *telegramRecorder) lastText(t *testing.T, pathSuffix string) string {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := len(r.calls) - 1; i >= 0; i-- {
+		call := r.calls[i]
+		if strings.HasSuffix(call.Path, pathSuffix) && call.Text != "" {
+			return call.Text
+		}
+	}
+	t.Fatalf("no API call ending in %q with text; calls: %+v", pathSuffix, r.calls)
+	return ""
+}
+
+func (r *telegramRecorder) callbackData(t *testing.T, label string) string {
+	t.Helper()
+	type button struct {
+		Text         string `json:"text"`
+		CallbackData string `json:"callback_data"`
+	}
+	type markup struct {
+		InlineKeyboard [][]button `json:"inline_keyboard"`
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := len(r.calls) - 1; i >= 0; i-- {
+		if len(r.calls[i].ReplyMarkup) == 0 {
+			continue
+		}
+		var keyboard markup
+		if json.Unmarshal(r.calls[i].ReplyMarkup, &keyboard) != nil {
+			continue
+		}
+		for _, row := range keyboard.InlineKeyboard {
+			for _, btn := range row {
+				if btn.Text == label && btn.CallbackData != "" {
+					return btn.CallbackData
+				}
+			}
+		}
+	}
+	t.Fatalf("button %q not found in emitted Telegram markup; calls: %+v", label, r.calls)
+	return ""
+}
+
+func testBotWithRecorder(t *testing.T) (*Bot, *memStore, *telegramRecorder) {
+	t.Helper()
+	server, recorder := newTestTelegramServer(t)
 	store := newMemStore()
 	store.users[303330553] = &models.User{TelegramID: 303330553, FirstName: "Test"}
 
 	pref := tele.Settings{
 		Token:       "test-token",
 		Poller:      &tele.LongPoller{Timeout: 0},
-		URL:         testServer.URL,
-		Synchronous: true, // run handlers synchronously for testing
+		URL:         server.URL,
+		Synchronous: true,
+		OnError: func(err error, _ tele.Context) {
+			t.Errorf("Telebot handler/API error: %v", err)
+		},
 	}
-
 	tb, err := tele.NewBot(pref)
 	if err != nil {
 		t.Fatalf("create bot: %v", err)
 	}
 
-	b := &Bot{
-		Tele:   tb,
-		Store:  store,
-		States: make(map[int64]*userState),
-	}
-
+	b := &Bot{Tele: tb, Store: store, States: make(map[int64]*userState)}
 	RegisterHandlers(b.Tele, b)
+	recorder.reset() // Ignore NewBot's getMe request.
+	return b, store, recorder
+}
+
+// testBot creates a bot wired to an in-memory store for testing.
+func testBot(t *testing.T) (*Bot, *memStore) {
+	t.Helper()
+	b, store, _ := testBotWithRecorder(t)
 	return b, store
 }
 
@@ -76,9 +193,11 @@ func textUpdate(text string) tele.Update {
 func callbackUpdate(data string) tele.Update {
 	return tele.Update{
 		Callback: &tele.Callback{
+			ID:     "test-callback-id",
 			Data:   data,
 			Sender: &tele.User{ID: 303330553, Username: "test", FirstName: "Test"},
 			Message: &tele.Message{
+				ID:   1,
 				Chat: &tele.Chat{ID: 303330553, Type: tele.ChatPrivate},
 			},
 		},
@@ -90,9 +209,11 @@ func callbackUpdate(data string) tele.Update {
 func staticCb(unique string) tele.Update {
 	return tele.Update{
 		Callback: &tele.Callback{
+			ID:     "test-callback-id",
 			Data:   "\f" + unique,
 			Sender: &tele.User{ID: 303330553, Username: "test", FirstName: "Test"},
 			Message: &tele.Message{
+				ID:   1,
 				Chat: &tele.Chat{ID: 303330553, Type: tele.ChatPrivate},
 			},
 		},
@@ -101,6 +222,11 @@ func staticCb(unique string) tele.Update {
 
 func processUpdate(b *Bot, u tele.Update) {
 	b.Tele.ProcessUpdate(u)
+}
+
+func clickButton(t *testing.T, b *Bot, recorder *telegramRecorder, label string) {
+	t.Helper()
+	processUpdate(b, callbackUpdate(recorder.callbackData(t, label)))
 }
 
 // ─── Tests ────────────────────────────────────────────────
@@ -274,42 +400,16 @@ func TestHandleCallbackUnknown(t *testing.T) {
 	// Should not panic — defer c.Respond() handles it
 }
 
-func TestHandleBudgetSetNoArgs(t *testing.T) {
-	b, _ := testBot(t)
+func TestBudgetCommandWithoutCategoriesShowsGuidance(t *testing.T) {
+	b, _, recorder := testBotWithRecorder(t)
 	processUpdate(b, textUpdate("/budget"))
-	// Should show budget menu, not crash
+	assertContains(t, recorder.lastText(t, "/sendMessage"), "No categories yet")
 }
 
 func TestHandleBudgetSetNotFound(t *testing.T) {
 	b, _ := testBot(t)
 	processUpdate(b, textUpdate("/budget set NonExistent 5000"))
 	// Should show "Category not found"
-}
-
-func TestAuthMiddleware(t *testing.T) {
-	t.Setenv("ALLOWED_TELEGRAM_ID", "999")
-
-	pref := tele.Settings{
-		Token:  "test",
-		Poller: &tele.LongPoller{Timeout: 0},
-		URL:    testServer.URL,
-	}
-	tb, _ := tele.NewBot(pref)
-	store := newMemStore()
-
-	b := &Bot{Tele: tb, Store: store, States: make(map[int64]*userState)}
-
-	// Sending from a non-allowed user
-	update := tele.Update{
-		Message: &tele.Message{
-			Text:   "/start",
-			Sender: &tele.User{ID: 111},
-			Chat:   &tele.Chat{ID: 111},
-		},
-	}
-	// Without the auth middleware registered, this just silently passes.
-	// Full auth test needs bot.New() with env var set.
-	b.Tele.ProcessUpdate(update)
 }
 
 func TestWizardCancel(t *testing.T) {
@@ -565,9 +665,9 @@ func TestMoveInteractive(t *testing.T) {
 
 	// Tap 🔀 Move → pick source (Mono, id=1) → pick dest (Cash, id=2) → enter amount
 	processUpdate(b, staticCb("move"))
-	processUpdate(b, staticCb("acc|1"))    // source
-	processUpdate(b, staticCb("acc|2"))    // destination
-	processUpdate(b, textUpdate("300"))          // amount
+	processUpdate(b, staticCb("acc|1")) // source
+	processUpdate(b, staticCb("acc|2")) // destination
+	processUpdate(b, textUpdate("300")) // amount
 
 	txs, _ := store.GetRecentTransactions(nil, 303330553, 10)
 	if len(txs) != 1 || txs[0].Type != "transfer" || txs[0].Amount != 300 {
@@ -665,10 +765,97 @@ func TestBudgetInteractive(t *testing.T) {
 	}
 }
 
-func TestDebugCatAdd(t *testing.T) {
-	b, store := testBot(t)
-	u := textUpdate("/cat add 🍞 Groceries")
-	b.Tele.ProcessUpdate(u)
-	cats, _ := store.GetCategories(nil, 303330553)
-	t.Logf("categories: %d", len(cats))
+func TestManageNavigationEditsOneMessageAndAcknowledgesCallbacks(t *testing.T) {
+	b, _, recorder := testBotWithRecorder(t)
+
+	processUpdate(b, textUpdate("/menu"))
+	clickButton(t, b, recorder, "⚙️ Manage")
+	assertContains(t, recorder.lastText(t, "/editMessageText"), "Manage")
+
+	clickButton(t, b, recorder, "🏷️ Categories")
+	assertContains(t, recorder.lastText(t, "/editMessageText"), "/cat add")
+
+	clickButton(t, b, recorder, "◀ Back")
+	assertContains(t, recorder.lastText(t, "/editMessageText"), "Manage")
+
+	clickButton(t, b, recorder, "◀ Back")
+	assertContains(t, recorder.lastText(t, "/editMessageText"), "Kaptl")
+
+	if got := recorder.callCount("/answerCallbackQuery"); got != 4 {
+		t.Fatalf("expected 4 acknowledged callbacks, got %d", got)
+	}
+	if got := recorder.callCount("/sendMessage"); got != 1 {
+		t.Fatalf("expected only /menu to send a message, got %d sends", got)
+	}
+	if got := recorder.callCount("/editMessageText"); got != 4 {
+		t.Fatalf("expected callback navigation to edit 4 times, got %d", got)
+	}
+}
+
+func TestExpenseBackChangesCategoryBeforeSaving(t *testing.T) {
+	b, store, recorder := testBotWithRecorder(t)
+	food, _ := store.CreateCategory(nil, 303330553, "Food", "🍞", nil)
+	travel, _ := store.CreateCategory(nil, 303330553, "Travel", "🚗", nil)
+	account, _ := store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 0)
+
+	processUpdate(b, textUpdate("/menu"))
+	clickButton(t, b, recorder, "➖ Expense")
+	clickButton(t, b, recorder, "🍞 Food")
+	processUpdate(b, textUpdate("42.50"))
+	clickButton(t, b, recorder, "◀ Back")
+	assertContains(t, recorder.lastText(t, "/editMessageText"), "Pick a category")
+
+	clickButton(t, b, recorder, "🚗 Travel")
+	processUpdate(b, textUpdate("42.50"))
+	clickButton(t, b, recorder, "💳 Mono")
+
+	txs, _ := store.GetRecentTransactions(nil, 303330553, 10)
+	if len(txs) != 1 {
+		t.Fatalf("expected one saved expense, got %d", len(txs))
+	}
+	tx := txs[0]
+	if tx.Type != "expense" || tx.Amount != 42.50 || tx.AccountID != account.ID || tx.CategoryID == nil || *tx.CategoryID != travel.ID {
+		t.Fatalf("expense saved with wrong values: %+v", tx)
+	}
+	if tx.CategoryID != nil && *tx.CategoryID == food.ID {
+		t.Fatalf("Back did not replace the original category: %+v", tx)
+	}
+}
+
+func TestMoveBackChangesSourceBeforeSaving(t *testing.T) {
+	b, store, recorder := testBotWithRecorder(t)
+	mono, _ := store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 1000)
+	cash, _ := store.CreateAccount(nil, 303330553, "Cash", "💵", "EUR", 500)
+
+	processUpdate(b, textUpdate("/menu"))
+	clickButton(t, b, recorder, "🔀 Move")
+	clickButton(t, b, recorder, "💳 Mono")
+	clickButton(t, b, recorder, "◀ Back")
+	assertContains(t, recorder.lastText(t, "/editMessageText"), "From: —")
+
+	clickButton(t, b, recorder, "💵 Cash")
+	clickButton(t, b, recorder, "💳 Mono")
+	processUpdate(b, textUpdate("125"))
+
+	txs, _ := store.GetRecentTransactions(nil, 303330553, 10)
+	if len(txs) != 1 {
+		t.Fatalf("expected one transfer, got %d", len(txs))
+	}
+	tx := txs[0]
+	if tx.Type != "transfer" || tx.Amount != 125 || tx.AccountID != cash.ID || tx.TransferAccountID == nil || *tx.TransferAccountID != mono.ID {
+		t.Fatalf("transfer saved with wrong values: %+v", tx)
+	}
+	accounts, _ := store.GetAccounts(nil, 303330553)
+	for _, account := range accounts {
+		switch account.ID {
+		case cash.ID:
+			if account.Balance != 375 {
+				t.Fatalf("source balance = %.2f, want 375", account.Balance)
+			}
+		case mono.ID:
+			if account.Balance != 1125 {
+				t.Fatalf("destination balance = %.2f, want 1125", account.Balance)
+			}
+		}
+	}
 }

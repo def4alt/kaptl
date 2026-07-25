@@ -166,11 +166,20 @@ func (b *Bot) handleBudgetMenu(c tele.Context) error {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
 	cats, _ := b.Store.GetCategories(ctx, c.Sender().ID)
+	var text string
+	var markup *tele.ReplyMarkup
 	if len(cats) == 0 {
-		return c.Edit("No categories yet. Create some first with `/cat add`.", mainMenu())
+		text = "No categories yet. Create some first with `/cat add`."
+		markup = mainMenu()
+	} else {
+		budgets, _ := b.Store.GetBudgets(ctx, c.Sender().ID)
+		text = view.Budgets(cats, budgets)
+		markup = budgetCategoryKeyboard(cats)
 	}
-	budgets, _ := b.Store.GetBudgets(ctx, c.Sender().ID)
-	return c.Edit(view.Budgets(cats, budgets), budgetCategoryKeyboard(cats))
+	if c.Callback() != nil {
+		return c.Edit(text, markup)
+	}
+	return c.Send(text, markup)
 }
 
 func (b *Bot) handleBudgetPick(c tele.Context) error {

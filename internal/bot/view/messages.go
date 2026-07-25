@@ -233,11 +233,15 @@ func Recent(txs []models.Transaction) string {
 // ─── Response builders ─────────────────────────────────────
 
 func Created(emoji, name, kind string) string {
+	if kind == "" {
+		kind = "category"
+	}
 	return fmt.Sprintf("✅ Created %s: %s *%s*", kind, emoji, name)
 }
 
 func Deleted(emoji, name, kind string) string {
-	return fmt.Sprintf("✅ Deleted %s: %s %s", kind, emoji, name)
+	entity := strings.TrimSpace(emoji + " " + name)
+	return fmt.Sprintf("✅ Deleted %s: %s", kind, entity)
 }
 
 func Error(msg string) string {

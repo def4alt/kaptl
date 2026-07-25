@@ -43,14 +43,6 @@ func (h *hctx) edit(text string, markup *tele.ReplyMarkup) error {
 	return h.C.Edit(text, markup)
 }
 
-// reply auto-detects: edits if callback, sends if slash command.
-func (h *hctx) reply(text string, markup *tele.ReplyMarkup) error {
-	if h.C.Callback() != nil {
-		return h.C.Edit(text, markup)
-	}
-	return h.C.Send(text, markup)
-}
-
 // ─── Entity accessors ─────────────────────────────────────
 
 // cats returns all categories for the current user.
@@ -69,36 +61,6 @@ func (h *hctx) accs() []models.Account {
 func (h *hctx) groups() []models.CategoryGroup {
 	groups, _ := h.Bot.Store.GetGroups(h.DB, h.UID)
 	return groups
-}
-
-// budgets returns all budgets for the current user.
-func (h *hctx) budgets() []models.Budget {
-	budgets, _ := h.Bot.Store.GetBudgets(h.DB, h.UID)
-	return budgets
-}
-
-// findCat returns a category by ID, or nil.
-func (h *hctx) findCat(id int64) *models.Category {
-	for _, c := range h.cats() {
-		if c.ID == id {
-			return &c
-		}
-	}
-	return nil
-}
-
-// findAcc returns an account by ID, or nil.
-func (h *hctx) findAcc(id int64) *models.Account {
-	acc, _ := h.Bot.Store.GetAccount(h.DB, id)
-	return acc
-}
-
-// catName returns "emoji name" for a category ID, or "category".
-func (h *hctx) catName(id int64) string {
-	if c := h.findCat(id); c != nil {
-		return c.Emoji + " " + c.Name
-	}
-	return "category"
 }
 
 // ─── Emoji parsing ────────────────────────────────────────

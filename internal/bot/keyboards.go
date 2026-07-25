@@ -16,14 +16,13 @@ var (
 	btnSummary    = tele.Btn{Unique: "summary", Text: "📊 Summary"}
 	btnRecent     = tele.Btn{Unique: "recent", Text: "📋 Recent"}
 	btnManage     = tele.Btn{Unique: "manage", Text: "⚙️ Manage"}
-	btnCancel     = tele.Btn{Unique: "cancel", Text: "❌ Cancel"}
-
 	// Manage submenu
-	btnMgCats = tele.Btn{Unique: "mg_cats", Text: "🏷️ Categories"}
-	btnMgAccs = tele.Btn{Unique: "mg_accs", Text: "💰 Accounts"}
-	btnMgBuds = tele.Btn{Unique: "mg_buds", Text: "🎯 Budgets"}
-	btnMgGrps = tele.Btn{Unique: "mg_grps", Text: "📁 Groups"}
-	btnBackMn = tele.Btn{Unique: "mg_back", Text: "◀ Back"}
+	btnMgCats     = tele.Btn{Unique: "mg_cats", Text: "🏷️ Categories"}
+	btnMgAccs     = tele.Btn{Unique: "mg_accs", Text: "💰 Accounts"}
+	btnMgBuds     = tele.Btn{Unique: "mg_buds", Text: "🎯 Budgets"}
+	btnMgGrps     = tele.Btn{Unique: "mg_grps", Text: "📁 Groups"}
+	btnBackMain   = tele.Btn{Unique: "back_main", Text: "◀ Back"}
+	btnBackManage = tele.Btn{Unique: "back_manage", Text: "◀ Back"}
 )
 
 // ─── Callback data prefixes ────────────────────────────────
@@ -38,44 +37,42 @@ const (
 	cbCurr   = "curr"
 	cbIntv   = "intv"
 	cbGroup  = "group"
+
+	actionNewCategory = "new_cat"
+	actionNewAccount  = "new_acc"
+	actionNewGroup    = "new_group"
 )
 
 // ─── Category selection ────────────────────────────────────
 
 func categoryKeyboard(cats []models.Category) *tele.ReplyMarkup {
-	menu := &tele.ReplyMarkup{}
-	var rows []tele.Row
-	for _, cat := range cats {
-		rows = append(rows, menu.Row(menu.Data(cat.Emoji+" "+cat.Name, cbCat, strconv.FormatInt(cat.ID, 10))))
-	}
-	rows = append(rows, menu.Row(menu.Data("❌ Cancel", cbCancel)))
-	menu.Inline(rows...)
-	return menu
+	return categorySelectionKeyboard(cats, cbCat)
 }
 
 func budgetCategoryKeyboard(cats []models.Category) *tele.ReplyMarkup {
+	return categorySelectionKeyboard(cats, cbBudget)
+}
+
+func categorySelectionKeyboard(cats []models.Category, callback string) *tele.ReplyMarkup {
 	menu := &tele.ReplyMarkup{}
 	var rows []tele.Row
 	for _, cat := range cats {
-		rows = append(rows, menu.Row(menu.Data(cat.Emoji+" "+cat.Name, cbBudget, strconv.FormatInt(cat.ID, 10))))
+		rows = append(rows, menu.Row(menu.Data(cat.Emoji+" "+cat.Name, callback, strconv.FormatInt(cat.ID, 10))))
 	}
 	rows = append(rows, menu.Row(menu.Data("❌ Cancel", cbCancel)))
 	menu.Inline(rows...)
 	return menu
 }
 
-func accountKeyboard(accs []models.Account) *tele.ReplyMarkup {
-	menu := &tele.ReplyMarkup{}
-	var rows []tele.Row
-	for _, a := range accs {
-		rows = append(rows, menu.Row(menu.Data(a.Emoji+" "+a.Name, cbAcc, strconv.FormatInt(a.ID, 10))))
-	}
-	rows = append(rows, menu.Row(menu.Data("◀ Back", cbBack), menu.Data("❌ Cancel", cbCancel)))
-	menu.Inline(rows...)
-	return menu
+func accountKeyboard(accs []models.Account, showBack bool) *tele.ReplyMarkup {
+	return accountSelectionKeyboard(accs, 0, showBack)
 }
 
-func accountKeyboardExclude(accs []models.Account, excludeID int64) *tele.ReplyMarkup {
+func accountKeyboardExclude(accs []models.Account, excludeID int64, showBack bool) *tele.ReplyMarkup {
+	return accountSelectionKeyboard(accs, excludeID, showBack)
+}
+
+func accountSelectionKeyboard(accs []models.Account, excludeID int64, showBack bool) *tele.ReplyMarkup {
 	menu := &tele.ReplyMarkup{}
 	var rows []tele.Row
 	for _, a := range accs {
@@ -84,7 +81,11 @@ func accountKeyboardExclude(accs []models.Account, excludeID int64) *tele.ReplyM
 		}
 		rows = append(rows, menu.Row(menu.Data(a.Emoji+" "+a.Name, cbAcc, strconv.FormatInt(a.ID, 10))))
 	}
-	rows = append(rows, menu.Row(menu.Data("◀ Back", cbBack), menu.Data("❌ Cancel", cbCancel)))
+	footer := []tele.Btn{menu.Data("❌ Cancel", cbCancel)}
+	if showBack {
+		footer = append([]tele.Btn{menu.Data("◀ Back", cbBack)}, footer...)
+	}
+	rows = append(rows, menu.Row(footer...))
 	menu.Inline(rows...)
 	return menu
 }
@@ -166,7 +167,28 @@ func manageMenu() *tele.ReplyMarkup {
 	menu.Inline(
 		menu.Row(btnMgCats, btnMgAccs),
 		menu.Row(btnMgBuds, btnMgGrps),
-		menu.Row(btnBackMn),
+		menu.Row(btnBackMain),
+	)
+	return menu
+}
+
+func manageCategoryMenu() *tele.ReplyMarkup {
+	return manageCreateMenu("➕ Add Category", actionNewCategory)
+}
+
+func manageAccountMenu() *tele.ReplyMarkup {
+	return manageCreateMenu("➕ Add Account", actionNewAccount)
+}
+
+func manageGroupMenu() *tele.ReplyMarkup {
+	return manageCreateMenu("➕ Add Group", actionNewGroup)
+}
+
+func manageCreateMenu(label, action string) *tele.ReplyMarkup {
+	menu := &tele.ReplyMarkup{}
+	menu.Inline(
+		menu.Row(menu.Data(label, cbEmoji, action)),
+		menu.Row(btnBackManage),
 	)
 	return menu
 }

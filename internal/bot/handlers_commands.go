@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/def4alt/kaptl/internal/bot/view"
 	"github.com/def4alt/kaptl/internal/models"
 	tele "gopkg.in/telebot.v4"
 )
@@ -12,10 +13,11 @@ import (
 // ─── /cat ──────────────────────────────────────────────────
 
 func (b *Bot) handleCat(c tele.Context) error {
-	h := b.withCtx(c); defer h.done()
+	h := b.withCtx(c)
+	defer h.done()
 	args := c.Args()
 	if len(args) == 0 {
-		return h.send(msgCategories(h.cats(), h.groups()))
+		return h.send(view.Categories(h.cats(), h.groups()))
 	}
 	switch args[0] {
 	case "add":
@@ -23,7 +25,7 @@ func (b *Bot) handleCat(c tele.Context) error {
 	case "rm", "remove", "delete":
 		return b.catRemove(h, args[1:])
 	case "list", "ls":
-		return h.send(msgCategories(h.cats(), h.groups()))
+		return h.send(view.Categories(h.cats(), h.groups()))
 	default:
 		return h.send("Usage:\n`/cat add 🍞 Name`\n`/cat rm Name`\n`/cat list`")
 	}
@@ -38,9 +40,9 @@ func (b *Bot) catAdd(h *hctx, args []string) error {
 
 	cat, err := h.Bot.Store.CreateCategory(h.DB, h.UID, name, emoji, nil)
 	if err != nil {
-		return h.send(respondError("Category already exists or error occurred."))
+		return h.send(view.Error("Category already exists or error occurred."))
 	}
-	return h.send(respondCreated(cat.Emoji, cat.Name, ""))
+	return h.send(view.Created(cat.Emoji, cat.Name, ""))
 }
 
 func (b *Bot) catRemove(h *hctx, args []string) error {
@@ -56,7 +58,7 @@ func (b *Bot) catRemove(h *hctx, args []string) error {
 		if strings.EqualFold(c.Name, name) {
 			catEmoji = c.Emoji
 			if err := h.Bot.Store.DeleteCategory(h.DB, c.ID); err != nil {
-				return h.send(respondError("Error deleting category."))
+				return h.send(view.Error("Error deleting category."))
 			}
 			deleted = true
 			break
@@ -65,22 +67,23 @@ func (b *Bot) catRemove(h *hctx, args []string) error {
 	if !deleted {
 		return h.send(fmt.Sprintf("Category *%s* not found.", name))
 	}
-	return h.send(fmt.Sprintf("✅ Deleted: %s %s", catEmoji, name))
+	return h.send(view.Deleted(catEmoji, name, "category"))
 }
 
 // ─── /acc ──────────────────────────────────────────────────
 
 func (b *Bot) handleAcc(c tele.Context) error {
-	h := b.withCtx(c); defer h.done()
+	h := b.withCtx(c)
+	defer h.done()
 	args := c.Args()
 	if len(args) == 0 {
-		return h.send(msgAccounts(h.accs()))
+		return h.send(view.Accounts(h.accs()))
 	}
 	switch args[0] {
 	case "add":
 		return b.accAdd(h, args[1:])
 	case "list", "ls":
-		return h.send(msgAccounts(h.accs()))
+		return h.send(view.Accounts(h.accs()))
 	default:
 		return h.send("Usage:\n`/acc add 💳 Name [currency]`\n`/acc list`\n\nCurrency: EUR, USD, UAH, PLN... (default: EUR)")
 	}
@@ -114,7 +117,7 @@ func (b *Bot) accAdd(h *hctx, args []string) error {
 
 	acc, err := h.Bot.Store.CreateAccount(h.DB, h.UID, name, emoji, currency, 0)
 	if err != nil {
-		return h.send(respondError("Error creating account. Does it already exist?"))
+		return h.send(view.Error("Error creating account. Does it already exist?"))
 	}
 	return h.send(fmt.Sprintf("✅ Created: %s *%s* (%s)", emoji, acc.Name, acc.Currency))
 }
@@ -122,7 +125,8 @@ func (b *Bot) accAdd(h *hctx, args []string) error {
 // ─── /budget ───────────────────────────────────────────────
 
 func (b *Bot) handleBudget(c tele.Context) error {
-	h := b.withCtx(c); defer h.done()
+	h := b.withCtx(c)
+	defer h.done()
 	args := c.Args()
 	if len(args) < 2 || args[0] != "set" {
 		return b.handleBudgetMenu(c)
@@ -151,7 +155,7 @@ func (b *Bot) handleBudget(c tele.Context) error {
 		if strings.EqualFold(cat.Name, catName) {
 			bd, err := h.Bot.Store.SetBudget(h.DB, h.UID, cat.ID, intervalDays, intervalMonths, amount)
 			if err != nil {
-				return h.send(respondError("Error setting budget."))
+				return h.send(view.Error("Error setting budget."))
 			}
 			return h.send(fmt.Sprintf("✅ Budget for %s *%s*: *%.0f* (%s)\n_Next reset: %s_",
 				cat.Emoji, cat.Name, amount, bd.Description(),
@@ -164,7 +168,8 @@ func (b *Bot) handleBudget(c tele.Context) error {
 // ─── /move ─────────────────────────────────────────────────
 
 func (b *Bot) handleMove(c tele.Context) error {
-	h := b.withCtx(c); defer h.done()
+	h := b.withCtx(c)
+	defer h.done()
 	text := strings.TrimSpace(c.Message().Payload)
 	parts := strings.Fields(text)
 	if len(parts) < 5 || strings.ToLower(parts[1]) != "from" || strings.ToLower(parts[3]) != "to" {
@@ -200,7 +205,7 @@ func (b *Bot) handleMove(c tele.Context) error {
 
 	tx, err := h.Bot.Store.CreateTransaction(h.DB, h.UID, from.ID, nil, "transfer", amount, &to.ID, fmt.Sprintf("→ %s", to.Name))
 	if err != nil {
-		return h.send(respondError("Error creating transfer."))
+		return h.send(view.Error("Error creating transfer."))
 	}
 
 	return h.send(fmt.Sprintf("✅ Transferred *%.2f* %s\n%s %s → %s %s\n_%s_",
@@ -211,10 +216,11 @@ func (b *Bot) handleMove(c tele.Context) error {
 // ─── /group ────────────────────────────────────────────────
 
 func (b *Bot) handleGroup(c tele.Context) error {
-	h := b.withCtx(c); defer h.done()
+	h := b.withCtx(c)
+	defer h.done()
 	args := c.Args()
 	if len(args) == 0 {
-		return h.send(msgGroups(h.groups()))
+		return h.send(view.Groups(h.groups()))
 	}
 	switch args[0] {
 	case "add":
@@ -237,9 +243,9 @@ func (b *Bot) groupAdd(h *hctx, args []string) error {
 	}
 	g, err := h.Bot.Store.CreateGroup(h.DB, h.UID, name, emoji)
 	if err != nil {
-		return h.send(respondError("Group already exists or error occurred."))
+		return h.send(view.Error("Group already exists or error occurred."))
 	}
-	return h.send(respondCreated(g.Emoji, g.Name, "group"))
+	return h.send(view.Created(g.Emoji, g.Name, "group"))
 }
 
 func (b *Bot) groupRemove(h *hctx, args []string) error {
@@ -253,12 +259,12 @@ func (b *Bot) groupRemove(h *hctx, args []string) error {
 		func(g models.CategoryGroup) error { return h.Bot.Store.DeleteGroup(h.DB, g.ID) },
 	)
 	if err != nil {
-		return h.send(respondError("Error deleting group."))
+		return h.send(view.Error("Error deleting group."))
 	}
 	if !found {
 		return h.send(fmt.Sprintf("Group *%s* not found.", name))
 	}
-	return h.send(fmt.Sprintf("✅ Deleted group: %s", name))
+	return h.send(view.Deleted("", name, "group"))
 }
 
 // ─── Interval parsing ─────────────────────────────────────

@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/def4alt/kaptl/internal/models"
 	tele "gopkg.in/telebot.v4"
 )
 
@@ -18,12 +17,12 @@ const dbTimeout = 5 * time.Second
 // Bot carries runtime state for the telegram bot.
 type Bot struct {
 	Tele   *tele.Bot
-	Store  models.Store
+	Store  Store
 	mu     sync.Mutex
 	States map[int64]*userState
 }
 
-func New(store models.Store) (*Bot, error) {
+func New(store Store) (*Bot, error) {
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if token == "" {
 		return nil, fmt.Errorf("TELEGRAM_BOT_TOKEN not set")

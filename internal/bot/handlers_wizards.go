@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/def4alt/kaptl/internal/models"
+	"github.com/def4alt/kaptl/internal/bot/view"
 	tele "gopkg.in/telebot.v4"
 )
 
@@ -40,10 +40,10 @@ func (b *Bot) handleCatPick(c tele.Context) error {
 		Step:   StepExpenseAmount,
 		MsgID:  c.Message().ID,
 		ChatID: c.Chat().ID,
-		Prev:   "pick_category",
+		Back:   BackExpenseCategory,
 	})
 
-	text := progressTemplate("➖ *New Expense*", expenseFields(findCatName(cats, catID), "—", "—"))
+	text := view.ProgressTemplate("➖ *New Expense*", view.ExpenseFields(view.CatName(cats, catID), "—", "—"))
 	return c.Edit(text, cancelBtn())
 }
 
@@ -66,8 +66,8 @@ func (b *Bot) receiveAmount(c tele.Context, state *userState) error {
 	}
 
 	cats, _ := b.Store.GetCategories(ctx, c.Sender().ID)
-	text := progressTemplate("➖ *New Expense*", expenseFields(findCatName(cats, w.CategoryID), fmt.Sprintf("€%.2f", amount), "—"))
-	b.editTemplate(state, text, accountKeyboard(accs))
+	text := view.ProgressTemplate("➖ *New Expense*", view.ExpenseFields(view.CatName(cats, w.CategoryID), fmt.Sprintf("€%.2f", amount), "—"))
+	b.editWizardMessage(state, text, accountKeyboard(accs, true))
 	return c.Send("\u200b")
 }
 
@@ -80,7 +80,7 @@ func (b *Bot) handleAddIncome(c tele.Context) error {
 		MsgID:  c.Message().ID,
 		ChatID: c.Chat().ID,
 	})
-	text := progressTemplate("➕ *New Income*", incomeFields("—", "—"))
+	text := view.ProgressTemplate("➕ *New Income*", view.IncomeFields("—", "—"))
 	return c.Edit(text, cancelBtn())
 }
 
@@ -102,8 +102,8 @@ func (b *Bot) receiveIncomeAmount(c tele.Context, state *userState) error {
 		return c.Send("No accounts! Create one with `/acc add 💳 Name`", mainMenu())
 	}
 
-	text := progressTemplate("➕ *New Income*", incomeFields(fmt.Sprintf("€%.2f", amount), "—"))
-	b.editTemplate(state, text, accountKeyboard(accs))
+	text := view.ProgressTemplate("➕ *New Income*", view.IncomeFields(fmt.Sprintf("€%.2f", amount), "—"))
+	b.editWizardMessage(state, text, accountKeyboard(accs, false))
 	return c.Send("\u200b")
 }
 
@@ -122,10 +122,10 @@ func (b *Bot) handleMoveBtn(c tele.Context) error {
 		Step:   StepMoveSource,
 		MsgID:  c.Message().ID,
 		ChatID: c.Chat().ID,
-		Prev:   "move_start",
+		Back:   BackMoveSource,
 	})
-	text := progressTemplate("🔀 *Transfer*", transferFields("—", "—", "—"))
-	return c.Edit(text, accountKeyboard(accs))
+	text := view.ProgressTemplate("🔀 *Transfer*", view.TransferFields("—", "—", "—"))
+	return c.Edit(text, accountKeyboard(accs, false))
 }
 
 func (b *Bot) receiveMoveAmount(c tele.Context, state *userState) error {
@@ -155,7 +155,7 @@ func (b *Bot) receiveMoveAmount(c tele.Context, state *userState) error {
 	}
 
 	b.clearState(c.Sender().ID)
-	text := progressTemplate("🔀 *Transfer*", transferFields(
+	text := view.ProgressTemplate("🔀 *Transfer*", view.TransferFields(
 		src.Emoji+" "+src.Name, dst.Emoji+" "+dst.Name, fmt.Sprintf("€%.2f", amount)))
 	return c.Send("✅ Transferred!\n\n"+text, mainMenu())
 }
@@ -170,7 +170,7 @@ func (b *Bot) handleBudgetMenu(c tele.Context) error {
 		return c.Edit("No categories yet. Create some first with `/cat add`.", mainMenu())
 	}
 	budgets, _ := b.Store.GetBudgets(ctx, c.Sender().ID)
-	return c.Edit(msgBudgets(cats, budgets), budgetCategoryKeyboard(cats))
+	return c.Edit(view.Budgets(cats, budgets), budgetCategoryKeyboard(cats))
 }
 
 func (b *Bot) handleBudgetPick(c tele.Context) error {
@@ -208,7 +208,7 @@ func (b *Bot) receiveBudgetAmount(c tele.Context, state *userState) error {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
 	cats, _ := b.Store.GetCategories(ctx, c.Sender().ID)
-	return c.Send(fmt.Sprintf("🎯 Budget for %s: *%.0f*\n\n_Pick an interval:_", findCatName(cats, w.CategoryID), amount), intervalKeyboard())
+	return c.Send(fmt.Sprintf("🎯 Budget for %s: *%.0f*\n\n_Pick an interval:_", view.CatName(cats, w.CategoryID), amount), intervalKeyboard())
 }
 
 // ─── Account pick → route by variant ──────────────────────
@@ -238,7 +238,7 @@ func (b *Bot) handleAccPick(c tele.Context) error {
 		}
 		b.clearState(uid)
 		cats, _ := b.Store.GetCategories(ctx, uid)
-		text := progressTemplate("➖ *New Expense*", expenseFields(findCatName(cats, w.CategoryID), fmt.Sprintf("€%.2f", w.Amount), acc.Emoji+" "+acc.Name))
+		text := view.ProgressTemplate("➖ *New Expense*", view.ExpenseFields(view.CatName(cats, w.CategoryID), fmt.Sprintf("€%.2f", w.Amount), acc.Emoji+" "+acc.Name))
 		return c.Edit("✅ Logged!\n\n"+text, mainMenu())
 
 	case IncomeWizard:
@@ -247,7 +247,7 @@ func (b *Bot) handleAccPick(c tele.Context) error {
 			return c.Edit("❌ Error saving income.", mainMenu())
 		}
 		b.clearState(uid)
-		text := progressTemplate("➕ *New Income*", incomeFields(fmt.Sprintf("€%.2f", w.Amount), acc.Emoji+" "+acc.Name))
+		text := view.ProgressTemplate("➕ *New Income*", view.IncomeFields(fmt.Sprintf("€%.2f", w.Amount), acc.Emoji+" "+acc.Name))
 		return c.Edit("✅ Income logged!\n\n"+text, mainMenu())
 
 	case MoveWizard:
@@ -257,8 +257,8 @@ func (b *Bot) handleAccPick(c tele.Context) error {
 			state.Wizard = w
 			state.Step = StepMoveTarget
 			accs, _ := b.Store.GetAccounts(ctx, uid)
-			text := progressTemplate("🔀 *Transfer*", transferFields(acc.Emoji+" "+acc.Name, "—", "—"))
-			return c.Edit(text, accountKeyboardExclude(accs, acc.ID))
+			text := view.ProgressTemplate("🔀 *Transfer*", view.TransferFields(acc.Emoji+" "+acc.Name, "—", "—"))
+			return c.Edit(text, accountKeyboardExclude(accs, acc.ID, true))
 
 		case StepMoveTarget:
 			w.DestinationID = acc.ID
@@ -269,7 +269,7 @@ func (b *Bot) handleAccPick(c tele.Context) error {
 			if src != nil {
 				srcName = src.Emoji + " " + src.Name
 			}
-			text := progressTemplate("🔀 *Transfer*", transferFields(srcName, acc.Emoji+" "+acc.Name, "—"))
+			text := view.ProgressTemplate("🔀 *Transfer*", view.TransferFields(srcName, acc.Emoji+" "+acc.Name, "—"))
 			return c.Edit(text, cancelBtn())
 		}
 	}
@@ -298,15 +298,4 @@ func (b *Bot) handleText(c tele.Context) error {
 		return b.receiveCreateName(c, state)
 	}
 	return nil
-}
-
-// ─── Helpers ──────────────────────────────────────────────
-
-func findCatName(cats []models.Category, id int64) string {
-	for _, c := range cats {
-		if c.ID == id {
-			return c.Emoji + " " + c.Name
-		}
-	}
-	return "category"
 }

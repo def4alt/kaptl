@@ -99,3 +99,12 @@ func TestFormatAmount(t *testing.T) {
 		}
 	}
 }
+
+func TestEntityResponsesHaveNoCompatibilityArtifacts(t *testing.T) {
+	if got := Created("🛒", "Groceries", ""); got != "✅ Created category: 🛒 *Groceries*" {
+		t.Fatalf("Created() = %q", got)
+	}
+	if got := Deleted("", "Needs", "group"); got != "✅ Deleted group: Needs" {
+		t.Fatalf("Deleted() = %q", got)
+	}
+}

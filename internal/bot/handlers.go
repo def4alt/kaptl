@@ -21,19 +21,18 @@ func RegisterHandlers(tb *tele.Bot, b *Bot) {
 	tb.Handle("/group", b.handleGroup)
 
 	// Inline buttons
-	tb.Handle(&btnAddExpense, b.handleAddExpense)
-	tb.Handle(&btnAddIncome, b.handleAddIncome)
-	tb.Handle(&btnMove, b.handleMoveBtn)
-	tb.Handle(&btnSummary, b.handleSummary)
-	tb.Handle(&btnRecent, b.handleRecent)
-	tb.Handle(&btnCancel, b.handleCancel)
-	tb.Handle(&btnManage, b.handleManageMenu)
-	tb.Handle(&btnMgCats, b.handleManageCats)
-	tb.Handle(&btnMgAccs, b.handleManageAccs)
-	tb.Handle(&btnMgBuds, b.handleManageBuds)
-	tb.Handle(&btnMgGrps, b.handleManageGrps)
-	tb.Handle(&btnBackMn, b.handleStart)
-
+	tb.Handle(&btnAddExpense, withCallbackAck(b.handleAddExpense))
+	tb.Handle(&btnAddIncome, withCallbackAck(b.handleAddIncome))
+	tb.Handle(&btnMove, withCallbackAck(b.handleMoveBtn))
+	tb.Handle(&btnSummary, withCallbackAck(b.handleSummary))
+	tb.Handle(&btnRecent, withCallbackAck(b.handleRecent))
+	tb.Handle(&btnManage, withCallbackAck(b.handleManageMenu))
+	tb.Handle(&btnMgCats, withCallbackAck(b.handleManageCats))
+	tb.Handle(&btnMgAccs, withCallbackAck(b.handleManageAccs))
+	tb.Handle(&btnMgBuds, withCallbackAck(b.handleManageBuds))
+	tb.Handle(&btnMgGrps, withCallbackAck(b.handleManageGrps))
+	tb.Handle(&btnBackMain, withCallbackAck(b.handleStart))
+	tb.Handle(&btnBackManage, withCallbackAck(b.handleManageMenu))
 	// Dynamic callbacks
 	tb.Handle("\f"+cbCat, b.handleCatPick)
 	tb.Handle("\f"+cbBudget, b.handleBudgetPick)
@@ -47,6 +46,13 @@ func RegisterHandlers(tb *tele.Bot, b *Bot) {
 
 	// Text
 	tb.Handle(tele.OnText, b.handleText)
+}
+
+func withCallbackAck(handler tele.HandlerFunc) tele.HandlerFunc {
+	return func(c tele.Context) error {
+		defer c.Respond()
+		return handler(c)
+	}
 }
 
 // ─── Core commands ─────────────────────────────────────────

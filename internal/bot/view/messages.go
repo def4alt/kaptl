@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/def4alt/kaptl/internal/models"
 )
@@ -34,9 +33,6 @@ Tap "➖ Expense" → pick category → type amount → pick account → done!
 
 // ─── Summary ──────────────────────────────────────────────
 
-const barWidth = 14
-const cardWidth = 14
-
 func Summary(rows []models.BudgetRow, rta float64) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("📊 *%s*\n", time.Now().Format("January 2006")))
@@ -45,7 +41,7 @@ func Summary(rows []models.BudgetRow, rta float64) string {
 	if rta < 0 {
 		color = "🔴"
 	}
-	b.WriteString(fmt.Sprintf("💵 Ready to Assign: %s €%.0f\n", color, rta))
+	b.WriteString(fmt.Sprintf("💵 Ready to Assign: %s %s\n", color, formatAmount(rta)))
 
 	totalSpent, totalBudget := 0.0, 0.0
 	lastGroup := ""
@@ -82,9 +78,9 @@ func Summary(rows []models.BudgetRow, rta float64) string {
 			left = "€0 left"
 		}
 
-		name := truncate(fmt.Sprintf("%s %s", r.Emoji, r.Name), 24)
+		name := truncateDisplay(fmt.Sprintf("%s %s", r.Emoji, r.Name), 24)
 		b.WriteString(fmt.Sprintf("\n  %s\n", name))
-		b.WriteString(fmt.Sprintf("     %s   %d%%\n", bar, int(pct*100)))
+		b.WriteString(fmt.Sprintf("     `%s`  %d%%\n", bar, int(pct*100)))
 		b.WriteString(fmt.Sprintf("     %s / %s  ·  %s", formatAmount(r.Spent), formatAmount(r.Available), left))
 
 		totalSpent += r.Spent
@@ -102,78 +98,17 @@ func Accounts(accs []models.Account) string {
 		return "No accounts yet.\n\n`/acc add 💳 Name [currency]`"
 	}
 
-	w := cardWidth
-
 	var total float64
-	var b strings.Builder
-	b.WriteString("💰 *Accounts*\n")
-
+	cards := make([]Card, 0, len(accs))
 	for _, a := range accs {
 		total += a.Balance
-		name := truncate(fmt.Sprintf("%s %s", a.Emoji, a.Name), w-1)
-		amount := formatAmount(a.Balance)
-
-		b.WriteString(fmt.Sprintf("\n┌%s┐\n", strings.Repeat("─", w+2)))
-		sp1 := w - len(name)
-		if sp1 < 0 { sp1 = 0 }
-		b.WriteString(fmt.Sprintf("│ %s%s │\n", name, strings.Repeat(" ", sp1)))
-		sp2 := w - len(amount)
-		if sp2 < 0 { sp2 = 0 }
-		b.WriteString(fmt.Sprintf("│ %s%s │\n", amount, strings.Repeat(" ", sp2)))
-		b.WriteString(fmt.Sprintf("└%s┘", strings.Repeat("─", w+2)))
+		cards = append(cards, NewCard(
+			fmt.Sprintf("%s %s", a.Emoji, a.Name),
+			formatAmount(a.Balance),
+		))
 	}
 
-	b.WriteString(fmt.Sprintf("\n\n         Total: %s", formatAmount(total)))
-	return b.String()
-}
-
-func formatAmount(v float64) string {
-	neg := v < 0
-	if neg { v = -v }
-	intPart := fmt.Sprintf("%.0f", v)
-	var result []byte
-	for i, c := range intPart {
-		if i > 0 && (len(intPart)-i)%3 == 0 {
-			result = append(result, ',')
-		}
-		result = append(result, byte(c))
-	}
-	if neg {
-		return "-€" + string(result)
-	}
-	return "€" + string(result)
-}
-
-// runeLen returns the visual character count (runes, not bytes).
-func runeLen(s string) int {
-	return utf8.RuneCountInString(s)
-}
-
-func padTo(s string, width int) string {
-	if len(s) >= width {
-		return s
-	}
-	return s + strings.Repeat(" ", width-len(s))
-}
-
-func max(a, b int) int {
-	if a > b { return a }
-	return b
-}
-
-func truncate(s string, maxLen int) string {
-	if runeLen(s) <= maxLen {
-		return s
-	}
-	runes := []rune(s)
-	return string(runes[:maxLen-1]) + "…"
-}
-
-func padRight(s string, n int) string {
-	if len(s) >= n {
-		return s
-	}
-	return s + strings.Repeat(" ", n-len(s))
+	return fmt.Sprintf("💰 *Accounts*\n\n%s\n\n*Total: %s*", RenderCards(cards), formatAmount(total))
 }
 
 func Categories(cats []models.Category, groups []models.CategoryGroup) string {
@@ -235,10 +170,7 @@ func Budgets(cats []models.Category, budgets []models.Budget) string {
 		bm[bd.CategoryID] = bd
 	}
 
-	w := cardWidth
-	var b strings.Builder
-	b.WriteString("🎯 *Budgets*\n")
-
+	cards := make([]Card, 0, len(budgets))
 	for _, c := range cats {
 		bd, ok := bm[c.ID]
 		if !ok {
@@ -247,15 +179,14 @@ func Budgets(cats []models.Category, budgets []models.Budget) string {
 		amount := formatAmount(bd.Amount)
 		interval := bd.Description()
 		reset := bd.PeriodStart.AddDate(0, bd.IntervalMonths, bd.IntervalDays).Format("Jan 2")
-
-		b.WriteString(fmt.Sprintf("\n┌%s┐\n", strings.Repeat("─", w+2)))
-		b.WriteString(fmt.Sprintf("│ %s %s%s │\n", c.Emoji, c.Name, strings.Repeat(" ", max(0, w-runeLen(c.Emoji)-runeLen(c.Name)-1))))
-		b.WriteString(fmt.Sprintf("│   %s %s%s │\n", amount, interval, strings.Repeat(" ", max(0, w-runeLen(amount)-runeLen(interval)-3))))
-		b.WriteString(fmt.Sprintf("│   Resets: %s%s │\n", reset, strings.Repeat(" ", max(0, w-runeLen(reset)-10))))
-		b.WriteString(fmt.Sprintf("└%s┘", strings.Repeat("─", w+2)))
+		cards = append(cards, NewCard(
+			fmt.Sprintf("%s %s", c.Emoji, c.Name),
+			fmt.Sprintf("%s · %s", amount, interval),
+			"Next · "+reset,
+		))
 	}
 
-	return b.String()
+	return "🎯 *Budgets*\n\n" + RenderCards(cards)
 }
 
 func Groups(groups []models.CategoryGroup) string {
@@ -275,10 +206,7 @@ func Recent(txs []models.Transaction) string {
 		return "No transactions yet!"
 	}
 
-	w := cardWidth
-	var b strings.Builder
-	b.WriteString("📋 *Recent*\n")
-
+	cards := make([]Card, 0, len(txs))
 	for _, t := range txs {
 		sign := "➖"
 		if t.Type == "income" {
@@ -287,25 +215,19 @@ func Recent(txs []models.Transaction) string {
 			sign = "↔️"
 		}
 		amount := formatAmount(t.Amount)
-
-		b.WriteString(fmt.Sprintf("\n┌%s┐\n", strings.Repeat("─", w+2)))
 		header := fmt.Sprintf("%s %s", sign, amount)
-		b.WriteString(fmt.Sprintf("│ %s%s │\n", header, strings.Repeat(" ", max(0, w-runeLen(header)))))
-
+		lines := []string{header}
 		if t.CategoryEmoji != "" {
-			cat := fmt.Sprintf("%s %s", t.CategoryEmoji, t.CategoryName)
-			b.WriteString(fmt.Sprintf("│ %s%s │\n", cat, strings.Repeat(" ", max(0, w-runeLen(cat)))))
+			lines = append(lines, fmt.Sprintf("%s %s", t.CategoryEmoji, t.CategoryName))
 		}
 		if t.Type == "transfer" && t.Description != "" {
-			b.WriteString(fmt.Sprintf("│ %s%s │\n", t.Description, strings.Repeat(" ", max(0, w-runeLen(t.Description)))))
+			lines = append(lines, t.Description)
 		}
-
-		footer := fmt.Sprintf("%s · %s", t.AccountName, t.CreatedAt.Format("Jan 2 15:04"))
-		b.WriteString(fmt.Sprintf("│ %s%s │\n", footer, strings.Repeat(" ", max(0, w-runeLen(footer)))))
-		b.WriteString(fmt.Sprintf("└%s┘", strings.Repeat("─", w+2)))
+		lines = append(lines, t.AccountName, t.CreatedAt.Format("Jan 2 · 15:04"))
+		cards = append(cards, NewCard(lines...))
 	}
 
-	return b.String()
+	return "📋 *Recent*\n\n" + RenderCards(cards)
 }
 
 // ─── Response builders ─────────────────────────────────────

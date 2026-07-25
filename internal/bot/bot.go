@@ -36,8 +36,9 @@ func New(store models.Store) (*Bot, error) {
 	}
 
 	pref := tele.Settings{
-		Token:  token,
-		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
+		Token:     token,
+		Poller:    &tele.LongPoller{Timeout: 10 * time.Second},
+		ParseMode: tele.ModeMarkdown,
 	}
 
 	tb, err := tele.NewBot(pref)

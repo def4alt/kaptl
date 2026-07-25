@@ -78,16 +78,16 @@ func Summary(rows []models.BudgetRow, rta float64) string {
 			left = "€0 left"
 		}
 
-		name := truncateDisplay(fmt.Sprintf("%s %s", r.Emoji, r.Name), 24)
-		b.WriteString(fmt.Sprintf("\n  %s\n", name))
-		b.WriteString(fmt.Sprintf("     `%s`  %d%%\n", bar, int(pct*100)))
-		b.WriteString(fmt.Sprintf("     %s / %s  ·  %s", formatAmount(r.Spent), formatAmount(r.Available), left))
+		name := truncateDisplay(fmt.Sprintf("%s %s", r.Emoji, r.Name), mobileWidth-7)
+		b.WriteString(fmt.Sprintf("\n  %s · %d%%\n", name, int(pct*100)))
+		b.WriteString(fmt.Sprintf("  `%s`\n", bar))
+		b.WriteString(fmt.Sprintf("  %s / %s  ·  %s", formatAmount(r.Spent), formatAmount(r.Available), left))
 
 		totalSpent += r.Spent
 		totalBudget += r.Available
 	}
 
-	b.WriteString(fmt.Sprintf("\n\n────────────────\n💵 Total: %s / %s", formatAmount(totalSpent), formatAmount(totalBudget)))
+	b.WriteString(fmt.Sprintf("\n\n%s\n💵 Total: %s / %s", strings.Repeat("─", mobileWidth), formatAmount(totalSpent), formatAmount(totalBudget)))
 	return b.String()
 }
 

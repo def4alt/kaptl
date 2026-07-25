@@ -8,8 +8,11 @@ import (
 )
 
 const (
-	barWidth  = 14
-	cardWidth = 14
+	// mobileWidth is the shared practical width for Telegram mobile messages.
+	// It fills the bubble on common phones while leaving room for side padding.
+	mobileWidth = 28
+	barWidth    = mobileWidth
+	cardWidth   = mobileWidth
 )
 
 // formatAmount formats whole-euro values consistently across every view.

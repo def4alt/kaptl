@@ -9,7 +9,11 @@ import (
 	"time"
 
 	"github.com/def4alt/kaptl/internal/models"
+	"github.com/def4alt/kaptl/internal/money"
+	"github.com/shopspring/decimal"
 )
+
+func d(value string) decimal.Decimal { return decimal.RequireFromString(value) }
 
 type memStore struct {
 	mu           sync.Mutex
@@ -19,6 +23,7 @@ type memStore struct {
 	categories   map[int64]*models.Category
 	transactions []*models.Transaction
 	budgets      map[string]*models.Budget
+	valuations   map[int64]map[string]decimal.Decimal
 
 	nextAccountID  int64
 	nextGroupID    int64
@@ -34,6 +39,7 @@ func newMemStore() *memStore {
 		groups:     make(map[int64]*models.CategoryGroup),
 		categories: make(map[int64]*models.Category),
 		budgets:    make(map[string]*models.Budget),
+		valuations: make(map[int64]map[string]decimal.Decimal),
 	}
 }
 
@@ -43,15 +49,15 @@ func (m *memStore) GetOrCreateUser(ctx context.Context, telegramID int64, userna
 	if u, ok := m.users[telegramID]; ok {
 		return u, nil
 	}
-	u := &models.User{TelegramID: telegramID, Username: username, FirstName: firstName, LanguageCode: lang, CreatedAt: time.Now()}
+	u := &models.User{TelegramID: telegramID, Username: username, FirstName: firstName, LanguageCode: lang, ReportingCurrency: "EUR", CreatedAt: time.Now()}
 	m.users[telegramID] = u
 	return u, nil
 }
 
-func (m *memStore) CreateAccount(ctx context.Context, userID int64, name, emoji, currency string, initialBalance float64) (*models.Account, error) {
+func (m *memStore) CreateAccount(ctx context.Context, userID int64, name, emoji, currency string, initialBalance decimal.Decimal) (*models.Account, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	currency, err := models.NormalizeCurrency(currency)
+	currency, err := money.NormalizeCurrency(currency)
 	if err != nil {
 		return nil, err
 	}
@@ -72,13 +78,13 @@ func (m *memStore) GetAccounts(ctx context.Context, userID int64) ([]models.Acco
 				if t.AccountID == a.ID {
 					switch t.Type {
 					case "income":
-						balance += t.Amount
+						balance = balance.Add(t.Amount)
 					case "expense", "transfer":
-						balance -= t.Amount
+						balance = balance.Sub(t.Amount)
 					}
 				}
 				if t.TransferAccountID != nil && *t.TransferAccountID == a.ID {
-					balance += t.Amount
+					balance = balance.Add(t.Amount)
 				}
 			}
 			ac := *a
@@ -181,7 +187,7 @@ func (m *memStore) DeleteCategory(ctx context.Context, userID, categoryID int64)
 	return nil
 }
 
-func (m *memStore) CreateTransaction(ctx context.Context, userID, accountID int64, categoryID *int64, txType string, amount float64, transferAccountID *int64, description string) (*models.Transaction, error) {
+func (m *memStore) CreateTransaction(ctx context.Context, userID, accountID int64, categoryID *int64, txType string, amount decimal.Decimal, transferAccountID *int64, description string) (*models.Transaction, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	account, ok := m.accounts[accountID]
@@ -223,6 +229,12 @@ func (m *memStore) GetRecentTransactions(ctx context.Context, userID int64, limi
 			if a, ok := m.accounts[tx.AccountID]; ok {
 				tx.AccountName = a.Name
 			}
+			if tx.Currency != "EUR" {
+				if amount, ok := m.valuations[tx.ID]["EUR"]; ok {
+					tx.ReportingAmount = &amount
+					tx.ReportingCurrency = "EUR"
+				}
+			}
 			result = append(result, tx)
 			if len(result) >= limit {
 				break
@@ -232,13 +244,19 @@ func (m *memStore) GetRecentTransactions(ctx context.Context, userID int64, limi
 	return result, nil
 }
 
-func (m *memStore) SetBudget(ctx context.Context, userID int64, categoryID int64, currency string, intervalDays, intervalMonths int, amount float64) (*models.Budget, error) {
+func (m *memStore) setValuation(transactionID int64, target string, amount decimal.Decimal) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	currency, err := models.NormalizeCurrency(currency)
-	if err != nil {
-		return nil, err
+	if m.valuations[transactionID] == nil {
+		m.valuations[transactionID] = make(map[string]decimal.Decimal)
 	}
+	m.valuations[transactionID][target] = amount
+}
+
+func (m *memStore) SetBudget(ctx context.Context, userID int64, categoryID int64, intervalDays, intervalMonths int, amount decimal.Decimal) (*models.Budget, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	currency := "EUR"
 	if err := models.ValidateBudgetInterval(intervalDays, intervalMonths); err != nil {
 		return nil, err
 	}
@@ -282,7 +300,7 @@ func (m *memStore) GetBudgetSummary(ctx context.Context, userID int64) ([]models
 		}
 		for _, tx := range m.transactions {
 			if tx.UserID == userID && tx.CategoryID != nil && *tx.CategoryID == c.ID && tx.Type == "expense" && tx.CreatedAt.After(monthStart) {
-				currencies[tx.Currency] = true
+				currencies["EUR"] = true
 			}
 		}
 		if len(currencies) == 0 {
@@ -295,15 +313,22 @@ func (m *memStore) GetBudgetSummary(ctx context.Context, userID int64) ([]models
 			if bd := budgets[currency]; bd != nil {
 				row.Budget = bd.Amount
 				row.Rollover = bd.Rollover
-				row.Available = bd.Amount + bd.Rollover
+				row.Available = bd.Amount.Add(bd.Rollover)
 				periodStart = bd.PeriodStart
 			}
 			for _, tx := range m.transactions {
-				if tx.UserID == userID && tx.CategoryID != nil && *tx.CategoryID == c.ID && tx.Type == "expense" && tx.Currency == currency && tx.CreatedAt.After(periodStart) {
-					row.Spent += tx.Amount
+				if tx.UserID != userID || tx.CategoryID == nil || *tx.CategoryID != c.ID || tx.Type != "expense" || !tx.CreatedAt.After(periodStart) {
+					continue
+				}
+				if tx.Currency == currency {
+					row.Spent = row.Spent.Add(tx.Amount)
+				} else if amount, ok := m.valuations[tx.ID][currency]; ok {
+					row.Spent = row.Spent.Add(amount)
+				} else {
+					row.MissingValuations++
 				}
 			}
-			row.Remaining = row.Available - row.Spent
+			row.Remaining = row.Available.Sub(row.Spent)
 			if c.GroupID != nil {
 				if g, ok := m.groups[*c.GroupID]; ok {
 					row.GroupName = g.Name
@@ -340,24 +365,48 @@ func (m *memStore) GetReadyToAssign(ctx context.Context, userID int64) ([]models
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	amounts := make(map[string]float64)
+	amount := decimal.Zero
+	missing := 0
 	for _, tx := range m.transactions {
-		if tx.UserID == userID && tx.Type == "income" {
-			amounts[tx.Currency] += tx.Amount
+		if tx.UserID != userID || tx.Type != "income" {
+			continue
+		}
+		if tx.Currency == "EUR" {
+			amount = amount.Add(tx.Amount)
+		} else if valued, ok := m.valuations[tx.ID]["EUR"]; ok {
+			amount = amount.Add(valued)
+		} else {
+			missing++
 		}
 	}
 	for _, budget := range m.budgets {
 		if budget.UserID == userID {
-			amounts[budget.Currency] -= budget.Amount
+			amount = amount.Sub(budget.Amount)
 		}
 	}
+	return []models.CurrencyAmount{{Currency: "EUR", Amount: amount, MissingValuations: missing}}, nil
+}
 
-	result := make([]models.CurrencyAmount, 0, len(amounts))
-	for currency, amount := range amounts {
-		result = append(result, models.CurrencyAmount{Currency: currency, Amount: amount})
+func (m *memStore) GetReportingSummary(ctx context.Context, userID int64) (*models.ReportingSummary, error) {
+	rows, err := m.GetBudgetSummary(ctx, userID)
+	if err != nil {
+		return nil, err
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Currency < result[j].Currency })
-	return result, nil
+	rta, err := m.GetReadyToAssign(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	pending := 0
+	for _, row := range rows {
+		pending += row.MissingValuations
+	}
+	if len(rta) > 0 {
+		pending += rta[0].MissingValuations
+	}
+	if pending > 0 {
+		return nil, &models.ValuationsPendingError{Count: pending}
+	}
+	return &models.ReportingSummary{Currency: "EUR", Rows: rows, ReadyToAssign: rta}, nil
 }
 
 func TestMemStoreCreateCategoryRejectsAnotherUsersGroup(t *testing.T) {
@@ -372,7 +421,7 @@ func TestMemStoreCreateCategoryRejectsAnotherUsersGroup(t *testing.T) {
 func TestMemStoreSetBudgetRejectsUnsafeIntervals(t *testing.T) {
 	store := newMemStore()
 	category, _ := store.CreateCategory(nil, 1, "Food", "🍞", nil)
-	if _, err := store.SetBudget(nil, 2, category.ID, "EUR", 0, 1, 100); err == nil {
+	if _, err := store.SetBudget(nil, 2, category.ID, 0, 1, d("100")); err == nil {
 		t.Fatal("SetBudget accepted another user's category")
 	}
 	tests := []struct {
@@ -388,7 +437,7 @@ func TestMemStoreSetBudgetRejectsUnsafeIntervals(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := store.SetBudget(nil, 1, category.ID, "EUR", tt.days, tt.months, 100); err == nil {
+			if _, err := store.SetBudget(nil, 1, category.ID, tt.days, tt.months, d("100")); err == nil {
 				t.Fatalf("SetBudget accepted interval days=%d months=%d", tt.days, tt.months)
 			}
 		})

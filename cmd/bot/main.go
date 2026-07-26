@@ -3,12 +3,16 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/def4alt/kaptl/internal/bot"
 	"github.com/def4alt/kaptl/internal/db"
+	"github.com/def4alt/kaptl/internal/fx/nbu"
+	"github.com/def4alt/kaptl/internal/reporting"
 )
 
 func main() {
@@ -21,7 +25,8 @@ func main() {
 	}
 
 	// Connect to database
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 	database, err := db.New(ctx)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
@@ -35,15 +40,30 @@ func main() {
 		log.Fatalf("Failed to create bot: %v", err)
 	}
 
+	workerID, err := os.Hostname()
+	if err != nil || workerID == "" {
+		workerID = "kaptl"
+	}
+	provider := nbu.NewClient(
+		"https://bank.gov.ua/NBUStatService/v1/statdirectory/exchange",
+		&http.Client{Timeout: 15 * time.Second},
+	)
+	valuationWorker := reporting.NewWorker(database, provider, workerID)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		valuationWorker.Run(ctx)
+	}()
+
 	// Graceful shutdown
 	go func() {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		<-sigCh
+		<-ctx.Done()
 		log.Println("🛑 Shutting down...")
 		b.Tele.Stop()
 	}()
 
 	log.Println("🤖 Kaptl bot is running...")
 	b.Start()
+	stop()
+	<-workerDone
 }

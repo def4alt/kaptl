@@ -28,16 +28,16 @@ var (
 // ─── Callback data prefixes ────────────────────────────────
 
 const (
-	cbCat        = "cat"
-	cbBudget     = "budget"
-	cbAcc        = "acc"
-	cbCancel     = "cancel"
-	cbBack       = "back"
-	cbEmoji      = "emoji"
-	cbCurr       = "curr"
-	cbBudgetCurr = "budget_curr"
-	cbIntv       = "intv"
-	cbGroup      = "group"
+	cbCat    = "cat"
+	cbBudget = "budget"
+	cbAcc    = "acc"
+	cbCancel = "cancel"
+	cbBack   = "back"
+	cbEmoji  = "emoji"
+	cbCurr   = "curr"
+
+	cbIntv  = "intv"
+	cbGroup = "group"
 
 	actionNewCategory = "new_cat"
 	actionNewAccount  = "new_acc"
@@ -118,10 +118,6 @@ func emojiKeyboard() *tele.ReplyMarkup {
 
 func currencyKeyboard() *tele.ReplyMarkup {
 	return currencySelectionKeyboard(cbCurr)
-}
-
-func budgetCurrencyKeyboard() *tele.ReplyMarkup {
-	return currencySelectionKeyboard(cbBudgetCurr)
 }
 
 func currencySelectionKeyboard(callback string) *tele.ReplyMarkup {

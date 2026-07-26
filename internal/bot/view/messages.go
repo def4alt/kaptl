@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/def4alt/kaptl/internal/models"
+	"github.com/shopspring/decimal"
 )
 
 // ─── Main messages ─────────────────────────────────────────
@@ -21,7 +22,7 @@ func Help() string {
 /cat add 🍞 Name – Create category
 /cat rm Name – Delete category
 /acc add 💳 Name [currency] – Create account
-/budget set Name amount [currency] [interval] – Set recurring budget
+/budget set Name amount [interval] – Set EUR reporting budget
 /group add 📁 Name – Create category group
 /group rm Name – Delete group
 /move amount from Account to Account – Transfer
@@ -41,14 +42,14 @@ func Summary(rows []models.BudgetRow, rta []models.CurrencyAmount) string {
 	sort.Slice(rta, func(i, j int) bool { return rta[i].Currency < rta[j].Currency })
 	for _, amount := range rta {
 		color := "🟢"
-		if amount.Amount < 0 {
+		if amount.Amount.IsNegative() {
 			color = "🔴"
 		}
 		b.WriteString(fmt.Sprintf("💵 Ready to Assign: %s %s\n", color, FormatMoney(amount.Amount, amount.Currency, 0)))
 	}
 
-	totalSpent := make(map[string]float64)
-	totalBudget := make(map[string]float64)
+	totalSpent := make(map[string]decimal.Decimal)
+	totalBudget := make(map[string]decimal.Decimal)
 	lastGroup := ""
 	first := true
 
@@ -62,32 +63,36 @@ func Summary(rows []models.BudgetRow, rta []models.CurrencyAmount) string {
 			b.WriteString(fmt.Sprintf("\n🏠 *%s*\n", lastGroup))
 		}
 
-		pct := 0.0
-		if r.Available > 0 {
-			pct = r.Spent / r.Available
-			if pct > 1 {
-				pct = 1
+		ratio := decimal.Zero
+		if r.Available.IsPositive() {
+			ratio = r.Spent.Div(r.Available)
+			if ratio.GreaterThan(decimal.NewFromInt(1)) {
+				ratio = decimal.NewFromInt(1)
+			}
+			if ratio.IsNegative() {
+				ratio = decimal.Zero
 			}
 		}
-		filled := int(pct * barWidth)
+		filled := int(ratio.Mul(decimal.NewFromInt(barWidth)).IntPart())
+		percent := ratio.Mul(decimal.NewFromInt(100)).IntPart()
 		bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
 
 		left := ""
-		if r.Remaining > 0 {
+		if r.Remaining.IsPositive() {
 			left = fmt.Sprintf("+%s left", FormatMoney(r.Remaining, r.Currency, 0))
-		} else if r.Remaining < 0 {
-			left = fmt.Sprintf("-%s over", FormatMoney(-r.Remaining, r.Currency, 0))
+		} else if r.Remaining.IsNegative() {
+			left = fmt.Sprintf("-%s over", FormatMoney(r.Remaining.Abs(), r.Currency, 0))
 		} else {
-			left = FormatMoney(0, r.Currency, 0) + " left"
+			left = FormatMoney(decimal.Zero, r.Currency, 0) + " left"
 		}
 
 		name := truncateDisplay(fmt.Sprintf("%s %s", r.Emoji, r.Name), mobileWidth-7)
-		b.WriteString(fmt.Sprintf("\n  %s · %d%%\n", name, int(pct*100)))
+		b.WriteString(fmt.Sprintf("\n  %s · %d%%\n", name, percent))
 		b.WriteString(fmt.Sprintf("  `%s`\n", bar))
 		b.WriteString(fmt.Sprintf("  %s / %s  ·  %s", FormatMoney(r.Spent, r.Currency, 0), FormatMoney(r.Available, r.Currency, 0), left))
 
-		totalSpent[r.Currency] += r.Spent
-		totalBudget[r.Currency] += r.Available
+		totalSpent[r.Currency] = totalSpent[r.Currency].Add(r.Spent)
+		totalBudget[r.Currency] = totalBudget[r.Currency].Add(r.Available)
 	}
 
 	currencies := make([]string, 0, len(totalSpent))
@@ -109,10 +114,10 @@ func Accounts(accs []models.Account) string {
 		return "No accounts yet.\n\n`/acc add 💳 Name [currency]`"
 	}
 
-	totals := make(map[string]float64)
+	totals := make(map[string]decimal.Decimal)
 	cards := make([]Card, 0, len(accs))
 	for _, a := range accs {
-		totals[a.Currency] += a.Balance
+		totals[a.Currency] = totals[a.Currency].Add(a.Balance)
 		cards = append(cards, NewCard(
 			fmt.Sprintf("%s %s", a.Emoji, a.Name),
 			FormatMoney(a.Balance, a.Currency, 0),
@@ -183,7 +188,7 @@ func Categories(cats []models.Category, groups []models.CategoryGroup) string {
 
 func Budgets(cats []models.Category, budgets []models.Budget) string {
 	if len(budgets) == 0 {
-		return "No budgets set yet.\n\nTap a category or use\n`/budget set Name amount [currency]`"
+		return "No budgets set yet.\n\nTap a category or use\n`/budget set Name amount [interval]`"
 	}
 
 	categories := make(map[int64]models.Category, len(cats))
@@ -234,9 +239,12 @@ func Recent(txs []models.Transaction) string {
 		} else if t.Type == "transfer" {
 			sign = "↔️"
 		}
-		amount := FormatMoney(t.Amount, t.Currency, 0)
+		amount := FormatMoney(t.Amount, t.Currency, 2)
 		header := fmt.Sprintf("%s %s", sign, amount)
 		lines := []string{header}
+		if t.ReportingAmount != nil && t.ReportingCurrency != "" && t.ReportingCurrency != t.Currency {
+			lines = append(lines, "≈ "+FormatMoney(*t.ReportingAmount, t.ReportingCurrency, 2))
+		}
 		if t.CategoryEmoji != "" {
 			lines = append(lines, fmt.Sprintf("%s %s", t.CategoryEmoji, t.CategoryName))
 		}

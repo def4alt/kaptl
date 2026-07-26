@@ -1,5 +1,7 @@
 package bot
 
+import "github.com/shopspring/decimal"
+
 // ─── Wizard variants (discriminated union) ─────────────────
 
 // Wizard is a sealed interface — only the types below implement it.
@@ -18,26 +20,25 @@ const (
 // ExpenseWizard is the state for the expense logging flow.
 type ExpenseWizard struct {
 	CategoryID int64
-	Amount     float64
+	Amount     decimal.Decimal
 }
 
 // IncomeWizard is the state for the income logging flow.
 type IncomeWizard struct {
-	Amount float64
+	Amount decimal.Decimal
 }
 
 // MoveWizard is the state for the account transfer flow.
 type MoveWizard struct {
 	SourceID      int64
 	DestinationID int64
-	Amount        float64
+	Amount        decimal.Decimal
 }
 
 // BudgetWizard is the state for the budget setting flow.
 type BudgetWizard struct {
 	CategoryID int64
-	Amount     float64
-	Currency   string
+	Amount     decimal.Decimal
 }
 
 // CreationWizard is the state for interactive entity creation.
@@ -77,7 +78,6 @@ const (
 
 	// Budget
 	StepBudgetAmount
-	StepBudgetCurrency
 	StepBudgetInterval
 
 	// Creation

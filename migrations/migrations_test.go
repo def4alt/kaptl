@@ -61,3 +61,39 @@ func TestMigrationsMakeAccountCurrencyUnconditionallyImmutable(t *testing.T) {
 		}
 	}
 }
+
+func TestValuationMigrationKeepsNativeLedgerAndQueuesReportableTransactions(t *testing.T) {
+	sql := migrationSQL(t, "003_reporting_valuations.sql")
+	for _, invariant := range []string{
+		"reporting_currency",
+		"CREATE TABLE IF NOT EXISTS fx_quotes",
+		"CREATE TABLE IF NOT EXISTS transaction_valuations",
+		"CREATE TABLE IF NOT EXISTS valuation_jobs",
+		"REFERENCES transactions(id) ON DELETE CASCADE",
+		"CREATE TRIGGER transactions_enqueue_valuation",
+		"INSERT INTO valuation_jobs",
+		"CHECK (reporting_currency = 'EUR')",
+		"status TEXT NOT NULL DEFAULT 'pending'",
+		"locked_token TEXT",
+		"round_half_even_2",
+		"valuation amount does not match native amount and quote rate",
+		"transaction_valuations_policy_shape_check",
+		"valuation_jobs_policy_shape_check",
+		"valuation_jobs_terminal_state_check",
+		"rate NUMERIC(38,20)",
+		"NEW.type IN ('expense', 'income')",
+		"quote currencies do not match transaction valuation",
+		"FX quotes are immutable",
+		"budget currency must equal user reporting currency",
+		"transaction valuation inputs are immutable",
+		"NEW.category_id IS DISTINCT FROM OLD.category_id",
+		"reporting currency is immutable",
+	} {
+		if !strings.Contains(sql, invariant) {
+			t.Errorf("003_reporting_valuations.sql lacks %q", invariant)
+		}
+	}
+	if strings.Contains(sql, "ALTER TABLE transactions DROP COLUMN amount") || strings.Contains(sql, "UPDATE transactions SET amount") {
+		t.Error("valuation migration mutates native transaction amounts")
+	}
+}

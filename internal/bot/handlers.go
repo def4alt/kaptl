@@ -41,7 +41,7 @@ func RegisterHandlers(tb *tele.Bot, b *Bot) {
 	tb.Handle("\f"+cbBack, b.handleBackBtn)
 	tb.Handle("\f"+cbEmoji, b.handleEmojiPick)
 	tb.Handle("\f"+cbCurr, b.handleCurrencyPick)
-	tb.Handle("\f"+cbBudgetCurr, b.handleBudgetCurrencyPick)
+
 	tb.Handle("\f"+cbIntv, b.handleIntervalPick)
 	tb.Handle("\f"+cbGroup, b.handleGroupPick)
 

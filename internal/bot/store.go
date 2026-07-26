@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/def4alt/kaptl/internal/models"
+	"github.com/shopspring/decimal"
 )
 
 // Store is the persistence contract required by the Telegram application.
@@ -11,7 +12,7 @@ import (
 type Store interface {
 	GetOrCreateUser(ctx context.Context, telegramID int64, username, firstName, lang string) (*models.User, error)
 
-	CreateAccount(ctx context.Context, userID int64, name, emoji, currency string, initialBalance float64) (*models.Account, error)
+	CreateAccount(ctx context.Context, userID int64, name, emoji, currency string, initialBalance decimal.Decimal) (*models.Account, error)
 	GetAccounts(ctx context.Context, userID int64) ([]models.Account, error)
 	GetAccount(ctx context.Context, userID, id int64) (*models.Account, error)
 
@@ -23,11 +24,10 @@ type Store interface {
 	GetCategories(ctx context.Context, userID int64) ([]models.Category, error)
 	DeleteCategory(ctx context.Context, userID, categoryID int64) error
 
-	CreateTransaction(ctx context.Context, userID, accountID int64, categoryID *int64, txType string, amount float64, transferAccountID *int64, description string) (*models.Transaction, error)
+	CreateTransaction(ctx context.Context, userID, accountID int64, categoryID *int64, txType string, amount decimal.Decimal, transferAccountID *int64, description string) (*models.Transaction, error)
 	GetRecentTransactions(ctx context.Context, userID int64, limit int) ([]models.Transaction, error)
 
-	SetBudget(ctx context.Context, userID, categoryID int64, currency string, intervalDays, intervalMonths int, amount float64) (*models.Budget, error)
-	GetBudgetSummary(ctx context.Context, userID int64) ([]models.BudgetRow, error)
+	SetBudget(ctx context.Context, userID, categoryID int64, intervalDays, intervalMonths int, amount decimal.Decimal) (*models.Budget, error)
+	GetReportingSummary(ctx context.Context, userID int64) (*models.ReportingSummary, error)
 	GetBudgets(ctx context.Context, userID int64) ([]models.Budget, error)
-	GetReadyToAssign(ctx context.Context, userID int64) ([]models.CurrencyAmount, error)
 }

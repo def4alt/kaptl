@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/def4alt/kaptl/internal/bot/view"
+	"github.com/def4alt/kaptl/internal/money"
 	tele "gopkg.in/telebot.v4"
 )
 
@@ -48,8 +48,9 @@ func (b *Bot) handleCatPick(c tele.Context) error {
 }
 
 func (b *Bot) receiveAmount(c tele.Context, state *userState) error {
-	amount, err := strconv.ParseFloat(strings.TrimSpace(c.Text()), 64)
-	if err != nil || amount <= 0 {
+	parsed, err := money.Parse(c.Text(), "EUR")
+	amount := parsed.Amount
+	if err != nil || !amount.IsPositive() {
 		return c.Send("Please enter a valid number, e.g. `42.50`", cancelBtn())
 	}
 
@@ -66,7 +67,7 @@ func (b *Bot) receiveAmount(c tele.Context, state *userState) error {
 	}
 
 	cats, _ := b.Store.GetCategories(ctx, c.Sender().ID)
-	text := view.ProgressTemplate("➖ *New Expense*", view.ExpenseFields(view.CatName(cats, w.CategoryID), fmt.Sprintf("%.2f", amount), "—"))
+	text := view.ProgressTemplate("➖ *New Expense*", view.ExpenseFields(view.CatName(cats, w.CategoryID), amount.StringFixed(2), "—"))
 	return c.Send(text, accountKeyboard(accs, true))
 }
 
@@ -84,8 +85,9 @@ func (b *Bot) handleAddIncome(c tele.Context) error {
 }
 
 func (b *Bot) receiveIncomeAmount(c tele.Context, state *userState) error {
-	amount, err := strconv.ParseFloat(strings.TrimSpace(c.Text()), 64)
-	if err != nil || amount <= 0 {
+	parsed, err := money.Parse(c.Text(), "EUR")
+	amount := parsed.Amount
+	if err != nil || !amount.IsPositive() {
 		return c.Send("Please enter a valid number, e.g. `1500`", cancelBtn())
 	}
 
@@ -101,7 +103,7 @@ func (b *Bot) receiveIncomeAmount(c tele.Context, state *userState) error {
 		return c.Send("No accounts! Create one with `/acc add 💳 Name`", mainMenu())
 	}
 
-	text := view.ProgressTemplate("➕ *New Income*", view.IncomeFields(fmt.Sprintf("%.2f", amount), "—"))
+	text := view.ProgressTemplate("➕ *New Income*", view.IncomeFields(amount.StringFixed(2), "—"))
 	return c.Send(text, accountKeyboard(accs, false))
 }
 
@@ -127,8 +129,9 @@ func (b *Bot) handleMoveBtn(c tele.Context) error {
 }
 
 func (b *Bot) receiveMoveAmount(c tele.Context, state *userState) error {
-	amount, err := strconv.ParseFloat(strings.TrimSpace(c.Text()), 64)
-	if err != nil || amount <= 0 {
+	parsed, err := money.Parse(c.Text(), "EUR")
+	amount := parsed.Amount
+	if err != nil || !amount.IsPositive() {
 		return c.Send("Please enter a valid number, e.g. `500`", cancelBtn())
 	}
 
@@ -202,20 +205,21 @@ func (b *Bot) handleBudgetPick(c tele.Context) error {
 }
 
 func (b *Bot) receiveBudgetAmount(c tele.Context, state *userState) error {
-	amount, err := strconv.ParseFloat(strings.TrimSpace(c.Text()), 64)
-	if err != nil || amount < 0 {
+	parsed, err := money.Parse(c.Text(), "EUR")
+	amount := parsed.Amount
+	if err != nil || amount.IsNegative() {
 		return c.Send("Please enter a valid number, e.g. `5000`", cancelBtn())
 	}
 
 	w := state.budgetW()
 	w.Amount = amount
 	state.Wizard = w
-	state.Step = StepBudgetCurrency
+	state.Step = StepBudgetInterval
 
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
 	cats, _ := b.Store.GetCategories(ctx, c.Sender().ID)
-	return c.Send(fmt.Sprintf("🎯 Budget for %s: *%.0f*\n\n_Pick a currency:_", view.CatName(cats, w.CategoryID), amount), budgetCurrencyKeyboard())
+	return c.Send(fmt.Sprintf("🎯 Budget for %s: *%s* EUR\n\n_Pick an interval:_", view.CatName(cats, w.CategoryID), amount.StringFixed(0)), intervalKeyboard())
 }
 
 // ─── Account pick → route by variant ──────────────────────

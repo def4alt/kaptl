@@ -6,7 +6,10 @@ import (
 
 	"github.com/def4alt/kaptl/internal/models"
 	"github.com/mattn/go-runewidth"
+	"github.com/shopspring/decimal"
 )
+
+func d(value string) decimal.Decimal { return decimal.RequireFromString(value) }
 
 func TestFitDisplayUsesVisualWidth(t *testing.T) {
 	got := fitDisplay("💳 Monobank", cardWidth)
@@ -46,8 +49,8 @@ func TestRenderCardsUsesSingleCodeBlock(t *testing.T) {
 
 func TestAccountsUsesCardRendererAndBottomTotal(t *testing.T) {
 	got := Accounts([]models.Account{
-		{Name: "Monobank", Emoji: "💳", Balance: 20000, Currency: "EUR"},
-		{Name: "Privat", Emoji: "💵", Balance: 41000, Currency: "UAH"},
+		{Name: "Monobank", Emoji: "💳", Balance: d("20000"), Currency: "EUR"},
+		{Name: "Privat", Emoji: "💵", Balance: d("41000"), Currency: "UAH"},
 	})
 
 	checks := []string{
@@ -75,10 +78,10 @@ func TestSummaryUsesFullWidthBar(t *testing.T) {
 		Name:      "Groceries",
 		Emoji:     "🛒",
 		Currency:  "UAH",
-		Spent:     50,
-		Available: 100,
-		Remaining: 50,
-	}}, []models.CurrencyAmount{{Currency: "UAH", Amount: 200}})
+		Spent:     d("50"),
+		Available: d("100"),
+		Remaining: d("50"),
+	}}, []models.CurrencyAmount{{Currency: "UAH", Amount: d("200")}})
 
 	bar := strings.Repeat("█", barWidth/2) + strings.Repeat("░", barWidth/2)
 	if !strings.Contains(got, "🛒 Groceries · 50%") {
@@ -91,11 +94,11 @@ func TestSummaryUsesFullWidthBar(t *testing.T) {
 
 func TestSummaryKeepsCurrencyTotalsSeparate(t *testing.T) {
 	got := Summary([]models.BudgetRow{
-		{Name: "Food", Emoji: "🍞", Currency: "EUR", Spent: 19, Available: 100, Remaining: 81},
-		{Name: "Food", Emoji: "🍞", Currency: "UAH", Spent: 2409, Available: 0, Remaining: -2409},
+		{Name: "Food", Emoji: "🍞", Currency: "EUR", Spent: d("19"), Available: d("100"), Remaining: d("81")},
+		{Name: "Food", Emoji: "🍞", Currency: "UAH", Spent: d("2409"), Available: d("0"), Remaining: d("-2409")},
 	}, []models.CurrencyAmount{
-		{Currency: "EUR", Amount: 4},
-		{Currency: "UAH", Amount: 14},
+		{Currency: "EUR", Amount: d("4")},
+		{Currency: "UAH", Amount: d("14")},
 	})
 
 	for _, want := range []string{"EUR 19 / EUR 100", "UAH 2,409 / UAH 0", "EUR total: EUR 19 / EUR 100", "UAH total: UAH 2,409 / UAH 0"} {
@@ -109,14 +112,14 @@ func TestSummaryKeepsCurrencyTotalsSeparate(t *testing.T) {
 }
 
 func TestFormatMoney(t *testing.T) {
-	cases := map[float64]string{
-		0:      "EUR 0",
-		20000:  "EUR 20,000",
-		-4950:  "EUR -4,950",
-		2830.4: "EUR 2,830",
+	cases := map[string]string{
+		"0":      "EUR 0",
+		"20000":  "EUR 20,000",
+		"-4950":  "EUR -4,950",
+		"2830.4": "EUR 2,830",
 	}
 	for value, want := range cases {
-		if got := FormatMoney(value, "eur", 0); got != want {
+		if got := FormatMoney(d(value), "eur", 0); got != want {
 			t.Errorf("FormatMoney(%v) = %q, want %q", value, got, want)
 		}
 	}
@@ -124,7 +127,7 @@ func TestFormatMoney(t *testing.T) {
 
 func TestRecentUsesTransactionCurrency(t *testing.T) {
 	got := Recent([]models.Transaction{{
-		Type: "expense", Amount: 2409, Currency: "UAH", AccountName: "Privat",
+		Type: "expense", Amount: d("2409"), Currency: "UAH", AccountName: "Privat",
 	}})
 	if !strings.Contains(got, "UAH 2,409") {
 		t.Fatalf("recent transaction missing UAH amount:\n%s", got)
@@ -134,12 +137,24 @@ func TestRecentUsesTransactionCurrency(t *testing.T) {
 	}
 }
 
+func TestRecentShowsReportingValuationWithoutReplacingNativeAmount(t *testing.T) {
+	reporting := d("50.12")
+	got := Recent([]models.Transaction{{
+		Type: "expense", Amount: d("2409"), Currency: "UAH", ReportingAmount: &reporting, ReportingCurrency: "EUR", AccountName: "Privat",
+	}})
+	for _, want := range []string{"UAH 2,409", "≈ EUR 50.12"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("recent transaction missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestBudgetsRenderEachCurrency(t *testing.T) {
 	got := Budgets(
 		[]models.Category{{ID: 1, Name: "Food", Emoji: "🍞"}},
 		[]models.Budget{
-			{CategoryID: 1, Currency: "EUR", Amount: 100, IntervalMonths: 1},
-			{CategoryID: 1, Currency: "UAH", Amount: 5000, IntervalMonths: 1},
+			{CategoryID: 1, Currency: "EUR", Amount: d("100"), IntervalMonths: 1},
+			{CategoryID: 1, Currency: "UAH", Amount: d("5000"), IntervalMonths: 1},
 		},
 	)
 	for _, want := range []string{"EUR 100", "UAH 5,000"} {

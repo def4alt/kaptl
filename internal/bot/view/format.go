@@ -1,21 +1,21 @@
 package view
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/mattn/go-runewidth"
+	"github.com/shopspring/decimal"
 )
 
 // FormatMoney keeps the ISO currency explicit so values from different
 // currencies can never look interchangeable in the UI.
-func FormatMoney(value float64, currency string, decimals int) string {
-	negative := value < 0
+func FormatMoney(value decimal.Decimal, currency string, decimals int) string {
+	negative := value.IsNegative()
 	if negative {
-		value = -value
+		value = value.Abs()
 	}
 
-	parts := strings.SplitN(fmt.Sprintf("%.*f", decimals, value), ".", 2)
+	parts := strings.SplitN(value.StringFixedBank(int32(decimals)), ".", 2)
 	digits := parts[0]
 	var formatted strings.Builder
 	for i, digit := range digits {

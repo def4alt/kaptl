@@ -7,6 +7,8 @@ import (
 
 	"github.com/def4alt/kaptl/internal/bot/view"
 	"github.com/def4alt/kaptl/internal/models"
+	"github.com/def4alt/kaptl/internal/money"
+	"github.com/shopspring/decimal"
 	tele "gopkg.in/telebot.v4"
 )
 
@@ -114,12 +116,12 @@ func (b *Bot) accAdd(h *hctx, args []string) error {
 		currency = strings.ToUpper(args[len(args)-1])
 		name = strings.Join(args[:len(args)-1], " ")
 	}
-	currency, err := models.NormalizeCurrency(currency)
+	currency, err := money.NormalizeCurrency(currency)
 	if err != nil {
 		return h.send("Unsupported currency. Choose EUR, USD, UAH, PLN, or GBP.")
 	}
 
-	acc, err := h.Bot.Store.CreateAccount(h.DB, h.UID, name, emoji, currency, 0)
+	acc, err := h.Bot.Store.CreateAccount(h.DB, h.UID, name, emoji, currency, decimal.Zero)
 	if err != nil {
 		return h.send(view.Error("Error creating account. Does it already exist?"))
 	}
@@ -136,7 +138,7 @@ func (b *Bot) handleBudget(c tele.Context) error {
 		return b.handleBudgetMenu(c)
 	}
 	if len(args) < 3 {
-		return h.send("Usage: `/budget set Name amount [currency] [interval]`\nExample: `/budget set Groceries 5000 UAH monthly`\n\nIntervals: weekly, biweekly, monthly, quarterly, or 30d")
+		return h.send("Usage: `/budget set Name amount [interval]`\nExample: `/budget set Groceries 5000 monthly`\n\nBudgets use your EUR reporting currency. Intervals: weekly, biweekly, monthly, quarterly, or 30d")
 	}
 
 	end := len(args)
@@ -146,30 +148,22 @@ func (b *Bot) handleBudget(c tele.Context) error {
 		end--
 	}
 
-	currency := "EUR"
-	if end >= 4 && len(args[end-1]) == 3 {
-		var err error
-		currency, err = models.NormalizeCurrency(args[end-1])
-		if err != nil {
-			return h.send("Unsupported currency. Choose EUR, USD, UAH, PLN, or GBP.")
-		}
-		end--
-	}
 	amountIdx := end - 1
-	amount, err := strconv.ParseFloat(args[amountIdx], 64)
-	if err != nil || amount < 0 {
+	parsed, err := money.Parse(args[amountIdx], "EUR")
+	amount := parsed.Amount
+	if err != nil || amount.IsNegative() {
 		return h.send("Amount must be a number, e.g. `5000`")
 	}
 
 	catName := strings.Join(args[1:amountIdx], " ")
 	for _, cat := range h.cats() {
 		if strings.EqualFold(cat.Name, catName) {
-			bd, err := h.Bot.Store.SetBudget(h.DB, h.UID, cat.ID, currency, intervalDays, intervalMonths, amount)
+			bd, err := h.Bot.Store.SetBudget(h.DB, h.UID, cat.ID, intervalDays, intervalMonths, amount)
 			if err != nil {
 				return h.send(view.Error("Error setting budget."))
 			}
 			return h.send(fmt.Sprintf("✅ Budget for %s *%s*: *%s* (%s)",
-				cat.Emoji, cat.Name, view.FormatMoney(amount, currency, 0), bd.Description()))
+				cat.Emoji, cat.Name, view.FormatMoney(amount, bd.Currency, 0), bd.Description()))
 		}
 	}
 	return h.send(fmt.Sprintf("Category *%s* not found.", catName))
@@ -186,8 +180,9 @@ func (b *Bot) handleMove(c tele.Context) error {
 		return h.send("Usage: `/move <amount> from <Account> to <Account>`\n\nExample: `/move 500 from Mono to Cash`\n\nOr tap *🔀 Move* for interactive mode.")
 	}
 
-	amount, err := strconv.ParseFloat(parts[0], 64)
-	if err != nil || amount <= 0 {
+	parsed, err := money.Parse(parts[0], "EUR")
+	amount := parsed.Amount
+	if err != nil || !amount.IsPositive() {
 		return h.send("❌ Invalid amount. Use a positive number, e.g. `500`")
 	}
 
@@ -221,8 +216,8 @@ func (b *Bot) handleMove(c tele.Context) error {
 		return h.send(view.Error("Error creating transfer."))
 	}
 
-	return h.send(fmt.Sprintf("✅ Transferred *%.2f* %s\n%s %s → %s %s\n_%s_",
-		amount, from.Currency, from.Emoji, from.Name, to.Emoji, to.Name,
+	return h.send(fmt.Sprintf("✅ Transferred *%s* %s\n%s %s → %s %s\n_%s_",
+		amount.StringFixed(2), from.Currency, from.Emoji, from.Name, to.Emoji, to.Name,
 		tx.CreatedAt.Format("Jan 2 15:04")))
 }
 

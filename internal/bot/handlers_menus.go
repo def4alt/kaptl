@@ -1,12 +1,15 @@
 package bot
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/def4alt/kaptl/internal/bot/view"
 	"github.com/def4alt/kaptl/internal/models"
+	"github.com/def4alt/kaptl/internal/money"
+	"github.com/shopspring/decimal"
 	tele "gopkg.in/telebot.v4"
 )
 
@@ -41,24 +44,31 @@ func (b *Bot) handleManageGrps(c tele.Context) error {
 func (b *Bot) handleSummary(c tele.Context) error {
 	h := b.withCtx(c)
 	defer h.done()
-	rows, err := h.Bot.Store.GetBudgetSummary(h.DB, h.UID)
+	summary, err := h.Bot.Store.GetReportingSummary(h.DB, h.UID)
 	if err != nil {
-		return c.Edit(view.Error("Error loading summary."), mainMenu())
+		var pending *models.ValuationsPendingError
+		if errors.As(err, &pending) {
+			if pending.Failed > 0 {
+				processing := pending.Count - pending.Failed
+				return h.edit(view.Error(fmt.Sprintf("Reporting is unavailable: %d valuation(s) exhausted retries; %d still processing. Native amounts remain unchanged.", pending.Failed, processing)), mainMenu())
+			}
+			return h.edit(fmt.Sprintf("⏳ Converting %d transaction(s) to your reporting currency. Native amounts are already saved; try the summary again shortly.", pending.Count), mainMenu())
+		}
+		return h.edit(view.Error("Error loading summary."), mainMenu())
 	}
-	if len(rows) == 0 {
+	if len(summary.Rows) == 0 {
 		return c.Edit("No categories yet. Use `/cat add 🍞 Name`.", mainMenu())
 	}
-	rta, err := h.Bot.Store.GetReadyToAssign(h.DB, h.UID)
-	if err != nil {
-		return c.Edit(view.Error("Error loading summary."), mainMenu())
-	}
-	return c.Edit(view.Summary(rows, rta), mainMenu())
+	return c.Edit(view.Summary(summary.Rows, summary.ReadyToAssign), mainMenu())
 }
 
 func (b *Bot) handleRecent(c tele.Context) error {
 	h := b.withCtx(c)
 	defer h.done()
-	txs, _ := h.Bot.Store.GetRecentTransactions(h.DB, h.UID, 10)
+	txs, err := h.Bot.Store.GetRecentTransactions(h.DB, h.UID, 10)
+	if err != nil {
+		return h.edit(view.Error("Error loading recent transactions."), mainMenu())
+	}
 	return c.Edit(view.Recent(txs), mainMenu())
 }
 
@@ -177,7 +187,7 @@ func (b *Bot) handleCurrencyPick(c tele.Context) error {
 		return c.Respond(&tele.CallbackResponse{Text: "No active operation"})
 	}
 	w := state.creationW()
-	currency, err := models.NormalizeCurrency(c.Callback().Data)
+	currency, err := money.NormalizeCurrency(c.Callback().Data)
 	if err != nil {
 		return c.Respond(&tele.CallbackResponse{Text: "Unsupported currency"})
 	}
@@ -185,31 +195,12 @@ func (b *Bot) handleCurrencyPick(c tele.Context) error {
 
 	h := b.withCtx(c)
 	defer h.done()
-	acc, err := h.Bot.Store.CreateAccount(h.DB, uid, w.Name, w.Emoji, currency, 0)
+	acc, err := h.Bot.Store.CreateAccount(h.DB, uid, w.Name, w.Emoji, currency, decimal.Zero)
 	if err != nil {
 		return h.edit(view.Error("Error creating account."), manageMenu())
 	}
 	b.clearState(uid)
 	return h.edit(fmt.Sprintf("✅ Created: %s *%s* (%s)", acc.Emoji, acc.Name, acc.Currency), manageMenu())
-}
-
-func (b *Bot) handleBudgetCurrencyPick(c tele.Context) error {
-	uid := c.Sender().ID
-	state := b.stateFor(uid)
-	if state == nil || state.Step != StepBudgetCurrency {
-		return c.Respond(&tele.CallbackResponse{Text: "No active budget"})
-	}
-	w := state.budgetW()
-	currency, err := models.NormalizeCurrency(c.Callback().Data)
-	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "Unsupported currency"})
-	}
-	defer c.Respond()
-	w.Currency = currency
-	state.Wizard = w
-	state.Step = StepBudgetInterval
-
-	return c.Edit(fmt.Sprintf("🎯 Budget: *%s*\n\n_Pick an interval:_", view.FormatMoney(w.Amount, w.Currency, 0)), intervalKeyboard())
 }
 
 func (b *Bot) handleIntervalPick(c tele.Context) error {
@@ -230,12 +221,12 @@ func (b *Bot) handleIntervalPick(c tele.Context) error {
 
 	h := b.withCtx(c)
 	defer h.done()
-	bd, err := h.Bot.Store.SetBudget(h.DB, uid, w.CategoryID, w.Currency, d, m, w.Amount)
+	bd, err := h.Bot.Store.SetBudget(h.DB, uid, w.CategoryID, d, m, w.Amount)
 	if err != nil {
 		return h.edit(view.Error("Error saving budget."), manageMenu())
 	}
 	b.clearState(uid)
-	return h.edit(fmt.Sprintf("✅ Budget: %s *%s* (%s)", view.CatName(h.cats(), w.CategoryID), view.FormatMoney(w.Amount, w.Currency, 0), bd.Description()), manageMenu())
+	return h.edit(fmt.Sprintf("✅ Budget: %s *%s* (%s)", view.CatName(h.cats(), w.CategoryID), view.FormatMoney(w.Amount, bd.Currency, 0), bd.Description()), manageMenu())
 }
 
 func (b *Bot) handleGroupPick(c tele.Context) error {

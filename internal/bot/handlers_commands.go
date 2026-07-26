@@ -57,7 +57,7 @@ func (b *Bot) catRemove(h *hctx, args []string) error {
 	for _, c := range cats {
 		if strings.EqualFold(c.Name, name) {
 			catEmoji = c.Emoji
-			if err := h.Bot.Store.DeleteCategory(h.DB, c.ID); err != nil {
+			if err := h.Bot.Store.DeleteCategory(h.DB, h.UID, c.ID); err != nil {
 				return h.send(view.Error("Error deleting category."))
 			}
 			deleted = true
@@ -114,6 +114,10 @@ func (b *Bot) accAdd(h *hctx, args []string) error {
 		currency = strings.ToUpper(args[len(args)-1])
 		name = strings.Join(args[:len(args)-1], " ")
 	}
+	currency, err := models.NormalizeCurrency(currency)
+	if err != nil {
+		return h.send("Unsupported currency. Choose EUR, USD, UAH, PLN, or GBP.")
+	}
 
 	acc, err := h.Bot.Store.CreateAccount(h.DB, h.UID, name, emoji, currency, 0)
 	if err != nil {
@@ -132,19 +136,26 @@ func (b *Bot) handleBudget(c tele.Context) error {
 		return b.handleBudgetMenu(c)
 	}
 	if len(args) < 3 {
-		return h.send("Usage: `/budget set Name amount [interval]`\nExample: `/budget set Groceries 5000 monthly`\n\nIntervals: weekly, biweekly, monthly, quarterly, or 30d")
+		return h.send("Usage: `/budget set Name amount [currency] [interval]`\nExample: `/budget set Groceries 5000 UAH monthly`\n\nIntervals: weekly, biweekly, monthly, quarterly, or 30d")
 	}
 
-	amountIdx := len(args) - 1
+	end := len(args)
 	intervalDays, intervalMonths := defaultInterval()
-	if len(args) >= 4 {
-		d, m := parseInterval(args[len(args)-1])
-		if d != 0 || m != 0 {
-			amountIdx = len(args) - 2
-			intervalDays, intervalMonths = d, m
-		}
+	if d, m := parseInterval(args[end-1]); d != 0 || m != 0 {
+		intervalDays, intervalMonths = d, m
+		end--
 	}
 
+	currency := "EUR"
+	if end >= 4 && len(args[end-1]) == 3 {
+		var err error
+		currency, err = models.NormalizeCurrency(args[end-1])
+		if err != nil {
+			return h.send("Unsupported currency. Choose EUR, USD, UAH, PLN, or GBP.")
+		}
+		end--
+	}
+	amountIdx := end - 1
 	amount, err := strconv.ParseFloat(args[amountIdx], 64)
 	if err != nil || amount < 0 {
 		return h.send("Amount must be a number, e.g. `5000`")
@@ -153,13 +164,12 @@ func (b *Bot) handleBudget(c tele.Context) error {
 	catName := strings.Join(args[1:amountIdx], " ")
 	for _, cat := range h.cats() {
 		if strings.EqualFold(cat.Name, catName) {
-			bd, err := h.Bot.Store.SetBudget(h.DB, h.UID, cat.ID, intervalDays, intervalMonths, amount)
+			bd, err := h.Bot.Store.SetBudget(h.DB, h.UID, cat.ID, currency, intervalDays, intervalMonths, amount)
 			if err != nil {
 				return h.send(view.Error("Error setting budget."))
 			}
-			return h.send(fmt.Sprintf("✅ Budget for %s *%s*: *%.0f* (%s)\n_Next reset: %s_",
-				cat.Emoji, cat.Name, amount, bd.Description(),
-				bd.PeriodStart.AddDate(0, bd.IntervalMonths, bd.IntervalDays).Format("Jan 2")))
+			return h.send(fmt.Sprintf("✅ Budget for %s *%s*: *%s* (%s)",
+				cat.Emoji, cat.Name, view.FormatMoney(amount, currency, 0), bd.Description()))
 		}
 	}
 	return h.send(fmt.Sprintf("Category *%s* not found.", catName))
@@ -201,6 +211,9 @@ func (b *Bot) handleMove(c tele.Context) error {
 	}
 	if from.ID == to.ID {
 		return h.send("❌ Source and destination must be different accounts.")
+	}
+	if from.Currency != to.Currency {
+		return h.send("❌ Accounts use different currencies. Cross-currency transfers need an explicit exchange rate and destination amount.")
 	}
 
 	tx, err := h.Bot.Store.CreateTransaction(h.DB, h.UID, from.ID, nil, "transfer", amount, &to.ID, fmt.Sprintf("→ %s", to.Name))
@@ -256,7 +269,7 @@ func (b *Bot) groupRemove(h *hctx, args []string) error {
 	groups := h.groups()
 
 	found, err := deleteByName(groups, name, func(g models.CategoryGroup) string { return g.Name },
-		func(g models.CategoryGroup) error { return h.Bot.Store.DeleteGroup(h.DB, g.ID) },
+		func(g models.CategoryGroup) error { return h.Bot.Store.DeleteGroup(h.DB, h.UID, g.ID) },
 	)
 	if err != nil {
 		return h.send(view.Error("Error deleting group."))
@@ -270,6 +283,7 @@ func (b *Bot) groupRemove(h *hctx, args []string) error {
 // ─── Interval parsing ─────────────────────────────────────
 
 func defaultInterval() (int, int) { return 0, 1 }
+
 func parseInterval(s string) (int, int) {
 	switch strings.ToLower(s) {
 	case "weekly":
@@ -282,7 +296,7 @@ func parseInterval(s string) (int, int) {
 		return 0, 3
 	default:
 		if strings.HasSuffix(s, "d") {
-			if d, err := strconv.Atoi(strings.TrimSuffix(s, "d")); err == nil && d > 0 {
+			if d, err := strconv.Atoi(strings.TrimSuffix(s, "d")); err == nil && d > 0 && d <= models.MaxBudgetIntervalDays {
 				return d, 0
 			}
 		}

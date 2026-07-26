@@ -2,6 +2,7 @@ package view
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,7 +21,7 @@ func Help() string {
 /cat add 🍞 Name – Create category
 /cat rm Name – Delete category
 /acc add 💳 Name [currency] – Create account
-/budget set Name amount [interval] – Set recurring budget
+/budget set Name amount [currency] [interval] – Set recurring budget
 /group add 📁 Name – Create category group
 /group rm Name – Delete group
 /move amount from Account to Account – Transfer
@@ -33,17 +34,21 @@ Tap "➖ Expense" → pick category → type amount → pick account → done!
 
 // ─── Summary ──────────────────────────────────────────────
 
-func Summary(rows []models.BudgetRow, rta float64) string {
+func Summary(rows []models.BudgetRow, rta []models.CurrencyAmount) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("📊 *%s*\n", time.Now().Format("January 2006")))
 
-	color := "🟢"
-	if rta < 0 {
-		color = "🔴"
+	sort.Slice(rta, func(i, j int) bool { return rta[i].Currency < rta[j].Currency })
+	for _, amount := range rta {
+		color := "🟢"
+		if amount.Amount < 0 {
+			color = "🔴"
+		}
+		b.WriteString(fmt.Sprintf("💵 Ready to Assign: %s %s\n", color, FormatMoney(amount.Amount, amount.Currency, 0)))
 	}
-	b.WriteString(fmt.Sprintf("💵 Ready to Assign: %s %s\n", color, formatAmount(rta)))
 
-	totalSpent, totalBudget := 0.0, 0.0
+	totalSpent := make(map[string]float64)
+	totalBudget := make(map[string]float64)
 	lastGroup := ""
 	first := true
 
@@ -57,7 +62,6 @@ func Summary(rows []models.BudgetRow, rta float64) string {
 			b.WriteString(fmt.Sprintf("\n🏠 *%s*\n", lastGroup))
 		}
 
-		// Progress bar
 		pct := 0.0
 		if r.Available > 0 {
 			pct = r.Spent / r.Available
@@ -68,26 +72,33 @@ func Summary(rows []models.BudgetRow, rta float64) string {
 		filled := int(pct * barWidth)
 		bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
 
-		// Left status
 		left := ""
 		if r.Remaining > 0 {
-			left = fmt.Sprintf("+%s left", formatAmount(r.Remaining))
+			left = fmt.Sprintf("+%s left", FormatMoney(r.Remaining, r.Currency, 0))
 		} else if r.Remaining < 0 {
-			left = fmt.Sprintf("-%s over", formatAmount(-r.Remaining))
+			left = fmt.Sprintf("-%s over", FormatMoney(-r.Remaining, r.Currency, 0))
 		} else {
-			left = "€0 left"
+			left = FormatMoney(0, r.Currency, 0) + " left"
 		}
 
 		name := truncateDisplay(fmt.Sprintf("%s %s", r.Emoji, r.Name), mobileWidth-7)
 		b.WriteString(fmt.Sprintf("\n  %s · %d%%\n", name, int(pct*100)))
 		b.WriteString(fmt.Sprintf("  `%s`\n", bar))
-		b.WriteString(fmt.Sprintf("  %s / %s  ·  %s", formatAmount(r.Spent), formatAmount(r.Available), left))
+		b.WriteString(fmt.Sprintf("  %s / %s  ·  %s", FormatMoney(r.Spent, r.Currency, 0), FormatMoney(r.Available, r.Currency, 0), left))
 
-		totalSpent += r.Spent
-		totalBudget += r.Available
+		totalSpent[r.Currency] += r.Spent
+		totalBudget[r.Currency] += r.Available
 	}
 
-	b.WriteString(fmt.Sprintf("\n\n%s\n💵 Total: %s / %s", strings.Repeat("─", mobileWidth), formatAmount(totalSpent), formatAmount(totalBudget)))
+	currencies := make([]string, 0, len(totalSpent))
+	for currency := range totalSpent {
+		currencies = append(currencies, currency)
+	}
+	sort.Strings(currencies)
+	b.WriteString("\n\n" + strings.Repeat("─", mobileWidth))
+	for _, currency := range currencies {
+		b.WriteString(fmt.Sprintf("\n💵 %s total: %s / %s", currency, FormatMoney(totalSpent[currency], currency, 0), FormatMoney(totalBudget[currency], currency, 0)))
+	}
 	return b.String()
 }
 
@@ -98,17 +109,27 @@ func Accounts(accs []models.Account) string {
 		return "No accounts yet.\n\n`/acc add 💳 Name [currency]`"
 	}
 
-	var total float64
+	totals := make(map[string]float64)
 	cards := make([]Card, 0, len(accs))
 	for _, a := range accs {
-		total += a.Balance
+		totals[a.Currency] += a.Balance
 		cards = append(cards, NewCard(
 			fmt.Sprintf("%s %s", a.Emoji, a.Name),
-			formatAmount(a.Balance),
+			FormatMoney(a.Balance, a.Currency, 0),
 		))
 	}
 
-	return fmt.Sprintf("💰 *Accounts*\n\n%s\n\n*Total: %s*", RenderCards(cards), formatAmount(total))
+	currencies := make([]string, 0, len(totals))
+	for currency := range totals {
+		currencies = append(currencies, currency)
+	}
+	sort.Strings(currencies)
+	totalLines := make([]string, 0, len(currencies))
+	for _, currency := range currencies {
+		totalLines = append(totalLines, fmt.Sprintf("*%s total: %s*", currency, FormatMoney(totals[currency], currency, 0)))
+	}
+
+	return fmt.Sprintf("💰 *Accounts*\n\n%s\n\n%s", RenderCards(cards), strings.Join(totalLines, "\n"))
 }
 
 func Categories(cats []models.Category, groups []models.CategoryGroup) string {
@@ -162,26 +183,25 @@ func Categories(cats []models.Category, groups []models.CategoryGroup) string {
 
 func Budgets(cats []models.Category, budgets []models.Budget) string {
 	if len(budgets) == 0 {
-		return "No budgets set yet.\n\nTap a category or use\n`/budget set Name amount`"
+		return "No budgets set yet.\n\nTap a category or use\n`/budget set Name amount [currency]`"
 	}
 
-	bm := map[int64]models.Budget{}
-	for _, bd := range budgets {
-		bm[bd.CategoryID] = bd
+	categories := make(map[int64]models.Category, len(cats))
+	for _, category := range cats {
+		categories[category.ID] = category
 	}
 
 	cards := make([]Card, 0, len(budgets))
-	for _, c := range cats {
-		bd, ok := bm[c.ID]
+	for _, budget := range budgets {
+		category, ok := categories[budget.CategoryID]
 		if !ok {
 			continue
 		}
-		amount := formatAmount(bd.Amount)
-		interval := bd.Description()
-		reset := bd.PeriodStart.AddDate(0, bd.IntervalMonths, bd.IntervalDays).Format("Jan 2")
+		amount := FormatMoney(budget.Amount, budget.Currency, 0)
+		reset := budget.PeriodStart.AddDate(0, budget.IntervalMonths, budget.IntervalDays).Format("Jan 2")
 		cards = append(cards, NewCard(
-			fmt.Sprintf("%s %s", c.Emoji, c.Name),
-			fmt.Sprintf("%s · %s", amount, interval),
+			fmt.Sprintf("%s %s", category.Emoji, category.Name),
+			fmt.Sprintf("%s · %s", amount, budget.Description()),
 			"Next · "+reset,
 		))
 	}
@@ -214,7 +234,7 @@ func Recent(txs []models.Transaction) string {
 		} else if t.Type == "transfer" {
 			sign = "↔️"
 		}
-		amount := formatAmount(t.Amount)
+		amount := FormatMoney(t.Amount, t.Currency, 0)
 		header := fmt.Sprintf("%s %s", sign, amount)
 		lines := []string{header}
 		if t.CategoryEmoji != "" {

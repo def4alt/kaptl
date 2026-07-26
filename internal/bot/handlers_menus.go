@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/def4alt/kaptl/internal/bot/view"
+	"github.com/def4alt/kaptl/internal/models"
 	tele "gopkg.in/telebot.v4"
 )
 
@@ -40,11 +41,17 @@ func (b *Bot) handleManageGrps(c tele.Context) error {
 func (b *Bot) handleSummary(c tele.Context) error {
 	h := b.withCtx(c)
 	defer h.done()
-	rows, _ := h.Bot.Store.GetBudgetSummary(h.DB, h.UID, 0)
+	rows, err := h.Bot.Store.GetBudgetSummary(h.DB, h.UID)
+	if err != nil {
+		return c.Edit(view.Error("Error loading summary."), mainMenu())
+	}
 	if len(rows) == 0 {
 		return c.Edit("No categories yet. Use `/cat add 🍞 Name`.", mainMenu())
 	}
-	rta, _ := h.Bot.Store.GetReadyToAssign(h.DB, h.UID)
+	rta, err := h.Bot.Store.GetReadyToAssign(h.DB, h.UID)
+	if err != nil {
+		return c.Edit(view.Error("Error loading summary."), mainMenu())
+	}
 	return c.Edit(view.Summary(rows, rta), mainMenu())
 }
 
@@ -166,13 +173,15 @@ func (b *Bot) receiveCreateName(c tele.Context, state *userState) error {
 func (b *Bot) handleCurrencyPick(c tele.Context) error {
 	uid := c.Sender().ID
 	state := b.stateFor(uid)
-	if state == nil {
+	if state == nil || state.Step != StepCreateCurrency {
 		return c.Respond(&tele.CallbackResponse{Text: "No active operation"})
 	}
-	defer c.Respond()
-
 	w := state.creationW()
-	currency := c.Callback().Data
+	currency, err := models.NormalizeCurrency(c.Callback().Data)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: "Unsupported currency"})
+	}
+	defer c.Respond()
 
 	h := b.withCtx(c)
 	defer h.done()
@@ -184,42 +193,84 @@ func (b *Bot) handleCurrencyPick(c tele.Context) error {
 	return h.edit(fmt.Sprintf("✅ Created: %s *%s* (%s)", acc.Emoji, acc.Name, acc.Currency), manageMenu())
 }
 
+func (b *Bot) handleBudgetCurrencyPick(c tele.Context) error {
+	uid := c.Sender().ID
+	state := b.stateFor(uid)
+	if state == nil || state.Step != StepBudgetCurrency {
+		return c.Respond(&tele.CallbackResponse{Text: "No active budget"})
+	}
+	w := state.budgetW()
+	currency, err := models.NormalizeCurrency(c.Callback().Data)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: "Unsupported currency"})
+	}
+	defer c.Respond()
+	w.Currency = currency
+	state.Wizard = w
+	state.Step = StepBudgetInterval
+
+	return c.Edit(fmt.Sprintf("🎯 Budget: *%s*\n\n_Pick an interval:_", view.FormatMoney(w.Amount, w.Currency, 0)), intervalKeyboard())
+}
+
 func (b *Bot) handleIntervalPick(c tele.Context) error {
 	uid := c.Sender().ID
 	state := b.stateFor(uid)
-	if state == nil {
+	if state == nil || state.Step != StepBudgetInterval {
+		return c.Respond(&tele.CallbackResponse{Text: "No active operation"})
+	}
+	d, m := parseInterval(c.Callback().Data)
+	if err := models.ValidateBudgetInterval(d, m); err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: "Invalid interval"})
+	}
+	w, ok := state.Wizard.(BudgetWizard)
+	if !ok {
 		return c.Respond(&tele.CallbackResponse{Text: "No active operation"})
 	}
 	defer c.Respond()
 
-	w := state.budgetW()
-	d, m := parseInterval(c.Callback().Data)
-
 	h := b.withCtx(c)
 	defer h.done()
-	bd, err := h.Bot.Store.SetBudget(h.DB, uid, w.CategoryID, d, m, w.Amount)
+	bd, err := h.Bot.Store.SetBudget(h.DB, uid, w.CategoryID, w.Currency, d, m, w.Amount)
 	if err != nil {
 		return h.edit(view.Error("Error saving budget."), manageMenu())
 	}
 	b.clearState(uid)
-	return h.edit(fmt.Sprintf("✅ Budget: %s *%.0f* (%s)", view.CatName(h.cats(), w.CategoryID), w.Amount, bd.Description()), manageMenu())
+	return h.edit(fmt.Sprintf("✅ Budget: %s *%s* (%s)", view.CatName(h.cats(), w.CategoryID), view.FormatMoney(w.Amount, w.Currency, 0), bd.Description()), manageMenu())
 }
 
 func (b *Bot) handleGroupPick(c tele.Context) error {
 	uid := c.Sender().ID
 	state := b.stateFor(uid)
-	if state == nil {
+	if state == nil || state.Step != StepCreateGroup {
 		return c.Respond(&tele.CallbackResponse{Text: "No active operation"})
 	}
-	defer c.Respond()
-
-	w := state.creationW()
-	groupIDStr := c.Callback().Data
-	if groupIDStr != "0" {
-		id, _ := strconv.ParseInt(groupIDStr, 10, 64)
-		w.CatGroup = &id
-		state.Wizard = w
+	w, ok := state.Wizard.(CreationWizard)
+	if !ok || w.Kind != CreateCategory {
+		return c.Respond(&tele.CallbackResponse{Text: "No active operation"})
 	}
+	groupIDStr := c.Callback().Data
+	w.CatGroup = nil
+	if groupIDStr != "0" {
+		id, err := strconv.ParseInt(groupIDStr, 10, 64)
+		if err != nil {
+			return c.Respond(&tele.CallbackResponse{Text: "Invalid group"})
+		}
+		h := b.withCtx(c)
+		defer h.done()
+		owned := false
+		for _, group := range h.groups() {
+			if group.ID == id {
+				owned = true
+				break
+			}
+		}
+		if !owned {
+			return c.Respond(&tele.CallbackResponse{Text: "Group not found"})
+		}
+		w.CatGroup = &id
+	}
+	state.Wizard = w
+	defer c.Respond()
 
 	h := b.withCtx(c)
 	defer h.done()

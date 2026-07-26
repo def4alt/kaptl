@@ -66,7 +66,7 @@ func (b *Bot) receiveAmount(c tele.Context, state *userState) error {
 	}
 
 	cats, _ := b.Store.GetCategories(ctx, c.Sender().ID)
-	text := view.ProgressTemplate("➖ *New Expense*", view.ExpenseFields(view.CatName(cats, w.CategoryID), fmt.Sprintf("€%.2f", amount), "—"))
+	text := view.ProgressTemplate("➖ *New Expense*", view.ExpenseFields(view.CatName(cats, w.CategoryID), fmt.Sprintf("%.2f", amount), "—"))
 	return c.Send(text, accountKeyboard(accs, true))
 }
 
@@ -101,7 +101,7 @@ func (b *Bot) receiveIncomeAmount(c tele.Context, state *userState) error {
 		return c.Send("No accounts! Create one with `/acc add 💳 Name`", mainMenu())
 	}
 
-	text := view.ProgressTemplate("➕ *New Income*", view.IncomeFields(fmt.Sprintf("€%.2f", amount), "—"))
+	text := view.ProgressTemplate("➕ *New Income*", view.IncomeFields(fmt.Sprintf("%.2f", amount), "—"))
 	return c.Send(text, accountKeyboard(accs, false))
 }
 
@@ -139,8 +139,8 @@ func (b *Bot) receiveMoveAmount(c tele.Context, state *userState) error {
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
 
-	src, _ := b.Store.GetAccount(ctx, w.SourceID)
-	dst, _ := b.Store.GetAccount(ctx, w.DestinationID)
+	src, _ := b.Store.GetAccount(ctx, c.Sender().ID, w.SourceID)
+	dst, _ := b.Store.GetAccount(ctx, c.Sender().ID, w.DestinationID)
 	if src == nil || dst == nil {
 		b.clearState(c.Sender().ID)
 		return c.Send("❌ Account not found. Start over.", mainMenu())
@@ -154,7 +154,7 @@ func (b *Bot) receiveMoveAmount(c tele.Context, state *userState) error {
 
 	b.clearState(c.Sender().ID)
 	text := view.ProgressTemplate("🔀 *Transfer*", view.TransferFields(
-		src.Emoji+" "+src.Name, dst.Emoji+" "+dst.Name, fmt.Sprintf("€%.2f", amount)))
+		src.Emoji+" "+src.Name, dst.Emoji+" "+dst.Name, view.FormatMoney(amount, src.Currency, 2)))
 	return c.Send("✅ Transferred!\n\n"+text, mainMenu())
 }
 
@@ -210,12 +210,12 @@ func (b *Bot) receiveBudgetAmount(c tele.Context, state *userState) error {
 	w := state.budgetW()
 	w.Amount = amount
 	state.Wizard = w
-	state.Step = StepBudgetInterval
+	state.Step = StepBudgetCurrency
 
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
 	cats, _ := b.Store.GetCategories(ctx, c.Sender().ID)
-	return c.Send(fmt.Sprintf("🎯 Budget for %s: *%.0f*\n\n_Pick an interval:_", view.CatName(cats, w.CategoryID), amount), intervalKeyboard())
+	return c.Send(fmt.Sprintf("🎯 Budget for %s: *%.0f*\n\n_Pick a currency:_", view.CatName(cats, w.CategoryID), amount), budgetCurrencyKeyboard())
 }
 
 // ─── Account pick → route by variant ──────────────────────
@@ -232,7 +232,7 @@ func (b *Bot) handleAccPick(c tele.Context) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), dbTimeout)
 	defer cancel()
-	acc, _ := b.Store.GetAccount(ctx, accID)
+	acc, _ := b.Store.GetAccount(ctx, uid, accID)
 	if acc == nil {
 		return c.Respond(&tele.CallbackResponse{Text: "Account not found"})
 	}
@@ -245,7 +245,7 @@ func (b *Bot) handleAccPick(c tele.Context) error {
 		}
 		b.clearState(uid)
 		cats, _ := b.Store.GetCategories(ctx, uid)
-		text := view.ProgressTemplate("➖ *New Expense*", view.ExpenseFields(view.CatName(cats, w.CategoryID), fmt.Sprintf("€%.2f", w.Amount), acc.Emoji+" "+acc.Name))
+		text := view.ProgressTemplate("➖ *New Expense*", view.ExpenseFields(view.CatName(cats, w.CategoryID), view.FormatMoney(w.Amount, acc.Currency, 2), acc.Emoji+" "+acc.Name))
 		return c.Edit("✅ Logged!\n\n"+text, mainMenu())
 
 	case IncomeWizard:
@@ -254,7 +254,7 @@ func (b *Bot) handleAccPick(c tele.Context) error {
 			return c.Edit("❌ Error saving income.", mainMenu())
 		}
 		b.clearState(uid)
-		text := view.ProgressTemplate("➕ *New Income*", view.IncomeFields(fmt.Sprintf("€%.2f", w.Amount), acc.Emoji+" "+acc.Name))
+		text := view.ProgressTemplate("➕ *New Income*", view.IncomeFields(view.FormatMoney(w.Amount, acc.Currency, 2), acc.Emoji+" "+acc.Name))
 		return c.Edit("✅ Income logged!\n\n"+text, mainMenu())
 
 	case MoveWizard:
@@ -268,10 +268,13 @@ func (b *Bot) handleAccPick(c tele.Context) error {
 			return c.Edit(text, accountKeyboardExclude(accs, acc.ID, true))
 
 		case StepMoveTarget:
+			src, _ := b.Store.GetAccount(ctx, uid, w.SourceID)
+			if src == nil || src.Currency != acc.Currency {
+				return c.Edit("❌ Accounts use different currencies. Cross-currency transfers need an explicit exchange rate and destination amount.", mainMenu())
+			}
 			w.DestinationID = acc.ID
 			state.Wizard = w
 			state.Step = StepMoveAmount
-			src, _ := b.Store.GetAccount(ctx, w.SourceID)
 			srcName := "Unknown"
 			if src != nil {
 				srcName = src.Emoji + " " + src.Name

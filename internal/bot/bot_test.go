@@ -2,7 +2,9 @@ package bot
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -342,12 +344,45 @@ func TestBudgetSet(t *testing.T) {
 	store.CreateCategory(nil, 303330553, "Groceries", "🍞", nil)
 	processUpdate(b, textUpdate("/budget set Groceries 5000"))
 
-	summary, _ := store.GetBudgetSummary(nil, 303330553, 0)
+	summary, _ := store.GetBudgetSummary(nil, 303330553)
 	if len(summary) != 1 {
 		t.Fatalf("expected 1 category in summary, got %d", len(summary))
 	}
 	if summary[0].Budget != 5000 {
 		t.Errorf("expected budget 5000, got %.0f", summary[0].Budget)
+	}
+	if summary[0].Currency != "EUR" {
+		t.Errorf("default budget currency = %q, want EUR", summary[0].Currency)
+	}
+}
+
+func TestBudgetSetAcceptsExplicitCurrency(t *testing.T) {
+	b, store := testBot(t)
+	store.CreateCategory(nil, 303330553, "Groceries", "🍞", nil)
+
+	processUpdate(b, textUpdate("/budget set Groceries 5000 UAH monthly"))
+
+	budgets, _ := store.GetBudgets(nil, 303330553)
+	if len(budgets) != 1 {
+		t.Fatalf("expected one UAH budget, got %+v", budgets)
+	}
+	if budgets[0].Currency != "UAH" || budgets[0].Amount != 5000 {
+		t.Fatalf("budget = %+v, want UAH 5000", budgets[0])
+	}
+}
+
+func TestInteractiveBudgetAsksForCurrency(t *testing.T) {
+	b, store, recorder := testBotWithRecorder(t)
+	store.CreateCategory(nil, 303330553, "Groceries", "🍞", nil)
+
+	processUpdate(b, staticCb("budget|1"))
+	processUpdate(b, textUpdate("5000"))
+	clickButton(t, b, recorder, "UAH")
+	clickButton(t, b, recorder, "Monthly")
+
+	budgets, _ := store.GetBudgets(nil, 303330553)
+	if len(budgets) != 1 || budgets[0].Currency != "UAH" || budgets[0].Amount != 5000 {
+		t.Fatalf("interactive budget = %+v, want one UAH 5000 budget", budgets)
 	}
 }
 
@@ -391,9 +426,34 @@ func TestExpenseAmountSendsAccountPickerAsNewMessage(t *testing.T) {
 	if got := recorder.callCount("/sendMessage"); got != 1 {
 		t.Fatalf("typed expense amount sent %d messages; expected one account picker", got)
 	}
-	assertContains(t, recorder.lastText(t, "/sendMessage"), "€42.50")
+	assertContains(t, recorder.lastText(t, "/sendMessage"), "42.50")
 	if got := recorder.callbackData(t, "💳 Mono"); got == "" {
 		t.Fatal("new expense message has no account picker")
+	}
+}
+
+func TestExpenseUsesSelectedAccountCurrency(t *testing.T) {
+	b, store, recorder := testBotWithRecorder(t)
+	store.CreateCategory(nil, 303330553, "Food", "🍞", nil)
+	store.CreateAccount(nil, 303330553, "Privat", "💳", "UAH", 0)
+
+	processUpdate(b, staticCb("cat|1"))
+	processUpdate(b, textUpdate("42.50"))
+	recorder.reset()
+	processUpdate(b, staticCb("acc|1"))
+
+	txs, _ := store.GetRecentTransactions(nil, 303330553, 10)
+	if len(txs) != 1 {
+		t.Fatalf("expected one persisted expense, got %d", len(txs))
+	}
+	if txs[0].Currency != "UAH" {
+		t.Fatalf("persisted expense currency = %q, want UAH", txs[0].Currency)
+	}
+
+	confirmation := recorder.lastText(t, "/editMessageText")
+	assertContains(t, confirmation, "UAH 42.50")
+	if strings.Contains(confirmation, "€42.50") {
+		t.Fatalf("UAH expense was rendered as EUR:\n%s", confirmation)
 	}
 }
 
@@ -496,7 +556,11 @@ func TestIncomeAmountSendsAccountPickerAsNewMessage(t *testing.T) {
 	if got := recorder.callCount("/sendMessage"); got != 1 {
 		t.Fatalf("typed income amount sent %d messages; expected one account picker", got)
 	}
-	assertContains(t, recorder.lastText(t, "/sendMessage"), "€1500.00")
+	amountPicker := recorder.lastText(t, "/sendMessage")
+	assertContains(t, amountPicker, "1500.00")
+	if strings.Contains(amountPicker, "EUR") || strings.Contains(amountPicker, "€") {
+		t.Fatalf("income amount was assigned a currency before account selection:\n%s", amountPicker)
+	}
 	if got := recorder.callbackData(t, "💳 Mono"); got == "" {
 		t.Fatal("new income message has no account picker")
 	}
@@ -507,12 +571,12 @@ func TestSummaryWithData(t *testing.T) {
 	store.CreateCategory(nil, 303330553, "Food", "🍞", nil)
 	store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 0)
 
-	store.SetBudget(nil, 303330553, 1, 0, 1, 5000)
+	store.SetBudget(nil, 303330553, 1, "EUR", 0, 1, 5000)
 	store.CreateTransaction(nil, 303330553, 1, intPtr(1), "expense", 2500, nil, "lunch")
 
 	processUpdate(b, staticCb("summary"))
 
-	summary, _ := store.GetBudgetSummary(nil, 303330553, 0)
+	summary, _ := store.GetBudgetSummary(nil, 303330553)
 	if len(summary) != 1 {
 		t.Fatalf("expected 1 category in summary, got %d", len(summary))
 	}
@@ -521,6 +585,23 @@ func TestSummaryWithData(t *testing.T) {
 	}
 	if summary[0].Remaining != 2500 {
 		t.Errorf("expected remaining 2500, got %.0f", summary[0].Remaining)
+	}
+}
+
+func TestSummarySeparatesEURAndUAH(t *testing.T) {
+	b, store, recorder := testBotWithRecorder(t)
+	store.CreateCategory(nil, 303330553, "Food", "🍞", nil)
+	eur, _ := store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 0)
+	uah, _ := store.CreateAccount(nil, 303330553, "Privat", "💳", "UAH", 0)
+	store.SetBudget(nil, 303330553, 1, "EUR", 0, 1, 100)
+	store.CreateTransaction(nil, 303330553, eur.ID, intPtr(1), "expense", 19, nil, "")
+	store.CreateTransaction(nil, 303330553, uah.ID, intPtr(1), "expense", 2409, nil, "")
+
+	processUpdate(b, staticCb("summary"))
+	got := recorder.lastText(t, "/editMessageText")
+
+	for _, want := range []string{"EUR 19 / EUR 100", "UAH 2,409 / UAH 0", "EUR total: EUR 19 / EUR 100", "UAH total: UAH 2,409 / UAH 0"} {
+		assertContains(t, got, want)
 	}
 }
 
@@ -622,7 +703,7 @@ func TestE2E(t *testing.T) {
 	t.Log("Step 6: View summary")
 	processUpdate(b, staticCb("summary"))
 
-	summary, _ := store.GetBudgetSummary(nil, 303330553, 0)
+	summary, _ := store.GetBudgetSummary(nil, 303330553)
 	if len(summary) != 1 {
 		t.Fatalf("expected 1 category in summary, got %d", len(summary))
 	}
@@ -677,6 +758,20 @@ func TestMoveCommand(t *testing.T) {
 	if txs[0].Amount != 200 {
 		t.Errorf("expected 200, got %.2f", txs[0].Amount)
 	}
+}
+
+func TestMoveCommandRejectsCrossCurrencyTransfer(t *testing.T) {
+	b, store, recorder := testBotWithRecorder(t)
+	store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 1000)
+	store.CreateAccount(nil, 303330553, "Privat", "💵", "UAH", 50000)
+
+	processUpdate(b, textUpdate("/move 200 from Mono to Privat"))
+
+	txs, _ := store.GetRecentTransactions(nil, 303330553, 10)
+	if len(txs) != 0 {
+		t.Fatalf("cross-currency transfer was persisted: %+v", txs)
+	}
+	assertContains(t, recorder.lastText(t, "/sendMessage"), "different currencies")
 }
 
 func TestMoveCommandInvalid(t *testing.T) {
@@ -744,7 +839,7 @@ func TestMoveNeedsTwoAccounts(t *testing.T) {
 func TestMoveE2E(t *testing.T) {
 	b, store := testBot(t)
 	store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 1000)
-	store.CreateAccount(nil, 303330553, "Cash", "💵", "USD", 500)
+	store.CreateAccount(nil, 303330553, "Cash", "💵", "EUR", 500)
 
 	// Interactive move: Mono → Cash, 400
 	processUpdate(b, staticCb("move"))
@@ -798,7 +893,8 @@ func TestBudgetInteractive(t *testing.T) {
 	processUpdate(b, staticCb("budgets"))
 	processUpdate(b, staticCb("budget|1"))
 	processUpdate(b, textUpdate("3000"))
-	processUpdate(b, staticCb("intv|monthly")) // pick interval
+	processUpdate(b, staticCb("budget_curr|EUR")) // pick currency
+	processUpdate(b, staticCb("intv|monthly"))    // pick interval
 
 	budgets, _ := store.GetBudgets(nil, 303330553)
 	if len(budgets) != 1 || budgets[0].Amount != 3000 {
@@ -834,6 +930,22 @@ func TestManageNavigationSendsNewMessagesAndAcknowledgesCallbacks(t *testing.T) 
 	}
 	if got := recorder.callCount("/editMessageText"); got != 4 {
 		t.Fatalf("expected 4 edits (callback navigation), got %d", got)
+	}
+}
+
+func TestExpenseRejectsAnotherUsersAccountCallback(t *testing.T) {
+	b, store := testBot(t)
+	store.CreateCategory(nil, 303330553, "Food", "🍞", nil)
+	otherAccount, _ := store.CreateAccount(nil, 999, "Other", "💳", "UAH", 0)
+
+	processUpdate(b, staticCb("add_expense"))
+	processUpdate(b, staticCb("cat|1"))
+	processUpdate(b, textUpdate("42"))
+	processUpdate(b, staticCb(fmt.Sprintf("acc|%d", otherAccount.ID)))
+
+	txs, _ := store.GetRecentTransactions(nil, 303330553, 10)
+	if len(txs) != 0 {
+		t.Fatalf("expense used another user's account: %+v", txs)
 	}
 }
 
@@ -903,4 +1015,91 @@ func TestMoveBackChangesSourceBeforeSaving(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestIntervalCallbackRequiresBudgetIntervalStep(t *testing.T) {
+	b, store := testBot(t)
+	category, _ := store.CreateCategory(nil, 303330553, "Groceries", "🍞", nil)
+	b.setState(303330553, &userState{
+		Wizard: BudgetWizard{CategoryID: category.ID, Amount: 500, Currency: "EUR"},
+		Step:   StepBudgetCurrency,
+	})
+
+	processUpdate(b, staticCb("intv|monthly"))
+
+	budgets, _ := store.GetBudgets(nil, 303330553)
+	if len(budgets) != 0 {
+		t.Fatalf("interval callback bypassed wizard step: %+v", budgets)
+	}
+}
+
+func TestIntervalCallbackRejectsInvalidInterval(t *testing.T) {
+	b, store := testBot(t)
+	category, _ := store.CreateCategory(nil, 303330553, "Groceries", "🍞", nil)
+	b.setState(303330553, &userState{
+		Wizard: BudgetWizard{CategoryID: category.ID, Amount: 500, Currency: "EUR"},
+		Step:   StepBudgetInterval,
+	})
+
+	processUpdate(b, staticCb("intv|not-an-interval"))
+
+	budgets, _ := store.GetBudgets(nil, 303330553)
+	if len(budgets) != 0 {
+		t.Fatalf("invalid interval callback created budget: %+v", budgets)
+	}
+}
+
+func TestGroupCallbackRejectsAnotherUsersGroup(t *testing.T) {
+	b, store := testBot(t)
+	otherGroup, _ := store.CreateGroup(nil, 999, "Private", "🔒")
+	b.setState(303330553, &userState{
+		Wizard: CreationWizard{Kind: CreateCategory, Name: "Food", Emoji: "🍞"},
+		Step:   StepCreateGroup,
+	})
+
+	processUpdate(b, staticCb(fmt.Sprintf("group|%d", otherGroup.ID)))
+
+	categories, _ := store.GetCategories(nil, 303330553)
+	if len(categories) != 0 {
+		t.Fatalf("another user's group was assigned: %+v", categories)
+	}
+}
+
+type summaryErrorStore struct {
+	*memStore
+	summaryErr error
+	rtaErr     error
+}
+
+func (s *summaryErrorStore) GetBudgetSummary(ctx context.Context, userID int64) ([]models.BudgetRow, error) {
+	if s.summaryErr != nil {
+		return nil, s.summaryErr
+	}
+	return s.memStore.GetBudgetSummary(ctx, userID)
+}
+
+func (s *summaryErrorStore) GetReadyToAssign(ctx context.Context, userID int64) ([]models.CurrencyAmount, error) {
+	if s.rtaErr != nil {
+		return nil, s.rtaErr
+	}
+	return s.memStore.GetReadyToAssign(ctx, userID)
+}
+
+func TestSummaryReportsQueryErrors(t *testing.T) {
+	b, store, recorder := testBotWithRecorder(t)
+	b.Store = &summaryErrorStore{memStore: store, summaryErr: errors.New("query failed")}
+
+	processUpdate(b, staticCb("summary"))
+
+	assertContains(t, recorder.lastText(t, "/editMessageText"), "Error loading summary")
+}
+
+func TestSummaryReportsReadyToAssignErrors(t *testing.T) {
+	b, store, recorder := testBotWithRecorder(t)
+	store.CreateCategory(nil, 303330553, "Food", "🍞", nil)
+	b.Store = &summaryErrorStore{memStore: store, rtaErr: errors.New("query failed")}
+
+	processUpdate(b, staticCb("summary"))
+
+	assertContains(t, recorder.lastText(t, "/editMessageText"), "Error loading summary")
 }

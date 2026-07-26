@@ -7,22 +7,16 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-const (
-	// mobileWidth is the shared practical width for Telegram mobile messages.
-	// It fills the bubble on common phones while leaving room for side padding.
-	mobileWidth = 28
-	barWidth    = mobileWidth
-	cardWidth   = mobileWidth
-)
-
-// formatAmount formats whole-euro values consistently across every view.
-func formatAmount(value float64) string {
+// FormatMoney keeps the ISO currency explicit so values from different
+// currencies can never look interchangeable in the UI.
+func FormatMoney(value float64, currency string, decimals int) string {
 	negative := value < 0
 	if negative {
 		value = -value
 	}
 
-	digits := fmt.Sprintf("%.0f", value)
+	parts := strings.SplitN(fmt.Sprintf("%.*f", decimals, value), ".", 2)
+	digits := parts[0]
 	var formatted strings.Builder
 	for i, digit := range digits {
 		if i > 0 && (len(digits)-i)%3 == 0 {
@@ -30,12 +24,25 @@ func formatAmount(value float64) string {
 		}
 		formatted.WriteRune(digit)
 	}
-
-	if negative {
-		return "-€" + formatted.String()
+	if len(parts) == 2 {
+		formatted.WriteByte('.')
+		formatted.WriteString(parts[1])
 	}
-	return "€" + formatted.String()
+
+	prefix := strings.ToUpper(currency) + " "
+	if negative {
+		prefix += "-"
+	}
+	return prefix + formatted.String()
 }
+
+const (
+	// mobileWidth is the shared practical width for Telegram mobile messages.
+	// It fills the bubble on common phones while leaving room for side padding.
+	mobileWidth = 28
+	barWidth    = mobileWidth
+	cardWidth   = mobileWidth
+)
 
 // fitDisplay truncates and right-pads text to an exact terminal display width.
 // Unlike len or rune count, runewidth handles wide emoji and CJK characters.

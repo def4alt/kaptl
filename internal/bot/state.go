@@ -37,6 +37,7 @@ type MoveWizard struct {
 type BudgetWizard struct {
 	CategoryID int64
 	Amount     float64
+	Currency   string
 }
 
 // CreationWizard is the state for interactive entity creation.
@@ -76,6 +77,7 @@ const (
 
 	// Budget
 	StepBudgetAmount
+	StepBudgetCurrency
 	StepBudgetInterval
 
 	// Creation

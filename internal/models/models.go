@@ -50,6 +50,7 @@ type BudgetRow struct {
 	UserID    int64     `json:"user_id"`
 	Name      string    `json:"name"`
 	Emoji     string    `json:"emoji"`
+	Currency  string    `json:"currency"`
 	CreatedAt time.Time `json:"created_at"`
 	Spent     float64   `json:"spent"`
 	Budget    float64   `json:"budget"`
@@ -60,6 +61,11 @@ type BudgetRow struct {
 	GroupID   *int64    `json:"group_id,omitempty"`
 }
 
+type CurrencyAmount struct {
+	Currency string  `json:"currency"`
+	Amount   float64 `json:"amount"`
+}
+
 type Transaction struct {
 	ID                int64     `json:"id"`
 	UserID            int64     `json:"user_id"`
@@ -67,6 +73,7 @@ type Transaction struct {
 	CategoryID        *int64    `json:"category_id,omitempty"`
 	Type              string    `json:"type"` // expense, income, transfer
 	Amount            float64   `json:"amount"`
+	Currency          string    `json:"currency"`
 	TransferAccountID *int64    `json:"transfer_account_id,omitempty"`
 	Description       string    `json:"description,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
@@ -80,6 +87,7 @@ type Budget struct {
 	ID             int64     `json:"id"`
 	UserID         int64     `json:"user_id"`
 	CategoryID     int64     `json:"category_id"`
+	Currency       string    `json:"currency"`
 	PeriodStart    time.Time `json:"period_start"`
 	IntervalDays   int       `json:"interval_days"`
 	IntervalMonths int       `json:"interval_months"`

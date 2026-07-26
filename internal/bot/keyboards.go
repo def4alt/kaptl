@@ -28,15 +28,16 @@ var (
 // ─── Callback data prefixes ────────────────────────────────
 
 const (
-	cbCat    = "cat"
-	cbBudget = "budget"
-	cbAcc    = "acc"
-	cbCancel = "cancel"
-	cbBack   = "back"
-	cbEmoji  = "emoji"
-	cbCurr   = "curr"
-	cbIntv   = "intv"
-	cbGroup  = "group"
+	cbCat        = "cat"
+	cbBudget     = "budget"
+	cbAcc        = "acc"
+	cbCancel     = "cancel"
+	cbBack       = "back"
+	cbEmoji      = "emoji"
+	cbCurr       = "curr"
+	cbBudgetCurr = "budget_curr"
+	cbIntv       = "intv"
+	cbGroup      = "group"
 
 	actionNewCategory = "new_cat"
 	actionNewAccount  = "new_acc"
@@ -116,10 +117,18 @@ func emojiKeyboard() *tele.ReplyMarkup {
 // ─── Currency picker ───────────────────────────────────────
 
 func currencyKeyboard() *tele.ReplyMarkup {
+	return currencySelectionKeyboard(cbCurr)
+}
+
+func budgetCurrencyKeyboard() *tele.ReplyMarkup {
+	return currencySelectionKeyboard(cbBudgetCurr)
+}
+
+func currencySelectionKeyboard(callback string) *tele.ReplyMarkup {
 	menu := &tele.ReplyMarkup{}
 	menu.Inline(
-		menu.Row(menu.Data("EUR", cbCurr, "EUR"), menu.Data("USD", cbCurr, "USD"), menu.Data("UAH", cbCurr, "UAH")),
-		menu.Row(menu.Data("PLN", cbCurr, "PLN"), menu.Data("GBP", cbCurr, "GBP")),
+		menu.Row(menu.Data("EUR", callback, "EUR"), menu.Data("USD", callback, "USD"), menu.Data("UAH", callback, "UAH")),
+		menu.Row(menu.Data("PLN", callback, "PLN"), menu.Data("GBP", callback, "GBP")),
 		menu.Row(menu.Data("❌ Cancel", cbCancel)),
 	)
 	return menu

@@ -101,7 +101,7 @@ func registerCommands(tb *tele.Bot) {
 		{Text: "help", Description: "show help"},
 		{Text: "cat", Description: "/cat add 🍞 Name | /cat rm Name | /cat list"},
 		{Text: "acc", Description: "/acc add 💳 Name [currency] | /acc list"},
-		{Text: "budget", Description: "/budget set Name amount [weekly|monthly|quarterly]"},
+		{Text: "budget", Description: "/budget set Name amount [currency] [interval]"},
 		{Text: "move", Description: "/move amount from Account to Account"},
 		{Text: "group", Description: "/group add 📁 Name | /group rm Name | /group"},
 	}

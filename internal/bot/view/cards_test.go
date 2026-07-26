@@ -46,16 +46,18 @@ func TestRenderCardsUsesSingleCodeBlock(t *testing.T) {
 
 func TestAccountsUsesCardRendererAndBottomTotal(t *testing.T) {
 	got := Accounts([]models.Account{
-		{Name: "Monobank", Emoji: "💳", Balance: 20000},
-		{Name: "Cash", Emoji: "💵", Balance: 0},
+		{Name: "Monobank", Emoji: "💳", Balance: 20000, Currency: "EUR"},
+		{Name: "Privat", Emoji: "💵", Balance: 41000, Currency: "UAH"},
 	})
 
 	checks := []string{
 		"💰 *Accounts*",
 		"```\n┌" + strings.Repeat("─", cardWidth+2) + "┐",
 		"│ 💳 Monobank",
-		"│ €20,000",
-		"*Total: €20,000*",
+		"│ EUR 20,000",
+		"│ UAH 41,000",
+		"*EUR total: EUR 20,000*",
+		"*UAH total: UAH 41,000*",
 	}
 	for _, want := range checks {
 		if !strings.Contains(got, want) {
@@ -63,8 +65,8 @@ func TestAccountsUsesCardRendererAndBottomTotal(t *testing.T) {
 		}
 	}
 
-	if !strings.HasSuffix(got, "*Total: €20,000*") {
-		t.Fatalf("total must stay at the bottom for mobile-first reading:\n%s", got)
+	if strings.Contains(got, "Total: EUR 61,000") || strings.Contains(got, "Total: UAH 61,000") {
+		t.Fatalf("account totals must not add different currencies:\n%s", got)
 	}
 }
 
@@ -72,10 +74,11 @@ func TestSummaryUsesFullWidthBar(t *testing.T) {
 	got := Summary([]models.BudgetRow{{
 		Name:      "Groceries",
 		Emoji:     "🛒",
+		Currency:  "UAH",
 		Spent:     50,
 		Available: 100,
 		Remaining: 50,
-	}}, 200)
+	}}, []models.CurrencyAmount{{Currency: "UAH", Amount: 200}})
 
 	bar := strings.Repeat("█", barWidth/2) + strings.Repeat("░", barWidth/2)
 	if !strings.Contains(got, "🛒 Groceries · 50%") {
@@ -86,16 +89,62 @@ func TestSummaryUsesFullWidthBar(t *testing.T) {
 	}
 }
 
-func TestFormatAmount(t *testing.T) {
+func TestSummaryKeepsCurrencyTotalsSeparate(t *testing.T) {
+	got := Summary([]models.BudgetRow{
+		{Name: "Food", Emoji: "🍞", Currency: "EUR", Spent: 19, Available: 100, Remaining: 81},
+		{Name: "Food", Emoji: "🍞", Currency: "UAH", Spent: 2409, Available: 0, Remaining: -2409},
+	}, []models.CurrencyAmount{
+		{Currency: "EUR", Amount: 4},
+		{Currency: "UAH", Amount: 14},
+	})
+
+	for _, want := range []string{"EUR 19 / EUR 100", "UAH 2,409 / UAH 0", "EUR total: EUR 19 / EUR 100", "UAH total: UAH 2,409 / UAH 0"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("summary missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "2,428") || strings.Contains(got, "2,509") {
+		t.Fatalf("summary mixed EUR and UAH values:\n%s", got)
+	}
+}
+
+func TestFormatMoney(t *testing.T) {
 	cases := map[float64]string{
-		0:      "€0",
-		20000:  "€20,000",
-		-4950:  "-€4,950",
-		2830.4: "€2,830",
+		0:      "EUR 0",
+		20000:  "EUR 20,000",
+		-4950:  "EUR -4,950",
+		2830.4: "EUR 2,830",
 	}
 	for value, want := range cases {
-		if got := formatAmount(value); got != want {
-			t.Errorf("formatAmount(%v) = %q, want %q", value, got, want)
+		if got := FormatMoney(value, "eur", 0); got != want {
+			t.Errorf("FormatMoney(%v) = %q, want %q", value, got, want)
+		}
+	}
+}
+
+func TestRecentUsesTransactionCurrency(t *testing.T) {
+	got := Recent([]models.Transaction{{
+		Type: "expense", Amount: 2409, Currency: "UAH", AccountName: "Privat",
+	}})
+	if !strings.Contains(got, "UAH 2,409") {
+		t.Fatalf("recent transaction missing UAH amount:\n%s", got)
+	}
+	if strings.Contains(got, "€2,409") {
+		t.Fatalf("recent transaction rendered as EUR:\n%s", got)
+	}
+}
+
+func TestBudgetsRenderEachCurrency(t *testing.T) {
+	got := Budgets(
+		[]models.Category{{ID: 1, Name: "Food", Emoji: "🍞"}},
+		[]models.Budget{
+			{CategoryID: 1, Currency: "EUR", Amount: 100, IntervalMonths: 1},
+			{CategoryID: 1, Currency: "UAH", Amount: 5000, IntervalMonths: 1},
+		},
+	)
+	for _, want := range []string{"EUR 100", "UAH 5,000"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("budgets missing %q:\n%s", want, got)
 		}
 	}
 }

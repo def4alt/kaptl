@@ -67,8 +67,7 @@ func (b *Bot) receiveAmount(c tele.Context, state *userState) error {
 
 	cats, _ := b.Store.GetCategories(ctx, c.Sender().ID)
 	text := view.ProgressTemplate("➖ *New Expense*", view.ExpenseFields(view.CatName(cats, w.CategoryID), fmt.Sprintf("€%.2f", amount), "—"))
-	b.editWizardMessage(state, text, accountKeyboard(accs, true))
-	return c.Send("\u200b")
+	return c.Send(text, accountKeyboard(accs, true))
 }
 
 // ─── Income wizard ────────────────────────────────────────
@@ -103,8 +102,7 @@ func (b *Bot) receiveIncomeAmount(c tele.Context, state *userState) error {
 	}
 
 	text := view.ProgressTemplate("➕ *New Income*", view.IncomeFields(fmt.Sprintf("€%.2f", amount), "—"))
-	b.editWizardMessage(state, text, accountKeyboard(accs, false))
-	return c.Send("\u200b")
+	return c.Send(text, accountKeyboard(accs, false))
 }
 
 // ─── Move wizard ──────────────────────────────────────────

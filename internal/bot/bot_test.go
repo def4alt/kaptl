@@ -376,6 +376,27 @@ func TestExpenseWizard(t *testing.T) {
 	}
 }
 
+func TestExpenseAmountSendsAccountPickerAsNewMessage(t *testing.T) {
+	b, store, recorder := testBotWithRecorder(t)
+	store.CreateCategory(nil, 303330553, "Food", "🍞", nil)
+	store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 0)
+
+	processUpdate(b, staticCb("cat|1"))
+	recorder.reset()
+	processUpdate(b, textUpdate("42.50"))
+
+	if got := recorder.callCount("/editMessageText"); got != 0 {
+		t.Fatalf("typed expense amount edited the previous message %d time(s); expected none", got)
+	}
+	if got := recorder.callCount("/sendMessage"); got != 1 {
+		t.Fatalf("typed expense amount sent %d messages; expected one account picker", got)
+	}
+	assertContains(t, recorder.lastText(t, "/sendMessage"), "€42.50")
+	if got := recorder.callbackData(t, "💳 Mono"); got == "" {
+		t.Fatal("new expense message has no account picker")
+	}
+}
+
 func TestHandleText(t *testing.T) {
 	b, _ := testBot(t)
 	// Sending bare text like a URL should trigger handleText and return a message
@@ -458,6 +479,26 @@ func TestIncomeWizard(t *testing.T) {
 	}
 	if txs[0].Amount != 1500 {
 		t.Errorf("expected 1500, got %.2f", txs[0].Amount)
+	}
+}
+
+func TestIncomeAmountSendsAccountPickerAsNewMessage(t *testing.T) {
+	b, store, recorder := testBotWithRecorder(t)
+	store.CreateAccount(nil, 303330553, "Mono", "💳", "EUR", 0)
+
+	processUpdate(b, staticCb("add_income"))
+	recorder.reset()
+	processUpdate(b, textUpdate("1500"))
+
+	if got := recorder.callCount("/editMessageText"); got != 0 {
+		t.Fatalf("typed income amount edited the previous message %d time(s); expected none", got)
+	}
+	if got := recorder.callCount("/sendMessage"); got != 1 {
+		t.Fatalf("typed income amount sent %d messages; expected one account picker", got)
+	}
+	assertContains(t, recorder.lastText(t, "/sendMessage"), "€1500.00")
+	if got := recorder.callbackData(t, "💳 Mono"); got == "" {
+		t.Fatal("new income message has no account picker")
 	}
 }
 

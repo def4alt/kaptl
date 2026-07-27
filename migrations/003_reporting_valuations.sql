@@ -82,6 +82,26 @@ CREATE INDEX IF NOT EXISTS idx_valuation_jobs_due
 CREATE INDEX IF NOT EXISTS idx_transaction_valuations_target
     ON transaction_valuations(target_currency, purpose, transaction_id);
 
+-- Migrations run as the administrative role in production. Keep the new
+-- objects writable by the same application role that owns the existing ledger.
+DO $$
+DECLARE
+    app_owner NAME;
+BEGIN
+    SELECT tableowner INTO app_owner
+    FROM pg_tables
+    WHERE schemaname = 'public' AND tablename = 'transactions';
+
+    IF app_owner IS NULL THEN
+        RAISE EXCEPTION 'cannot determine application role from transactions owner';
+    END IF;
+
+    EXECUTE format('ALTER TABLE fx_quotes OWNER TO %I', app_owner);
+    EXECUTE format('ALTER TABLE transaction_valuations OWNER TO %I', app_owner);
+    EXECUTE format('ALTER TABLE valuation_jobs OWNER TO %I', app_owner);
+    EXECUTE format('ALTER SEQUENCE fx_quotes_id_seq OWNER TO %I', app_owner);
+END $$;
+
 DO $$
 BEGIN
     IF EXISTS (

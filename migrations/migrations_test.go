@@ -80,6 +80,8 @@ func TestValuationMigrationKeepsNativeLedgerAndQueuesReportableTransactions(t *t
 		"transaction_valuations_policy_shape_check",
 		"valuation_jobs_policy_shape_check",
 		"valuation_jobs_terminal_state_check",
+		"ALTER TABLE valuation_jobs OWNER TO %I",
+		"ALTER SEQUENCE fx_quotes_id_seq OWNER TO %I",
 		"rate NUMERIC(38,20)",
 		"NEW.type IN ('expense', 'income')",
 		"quote currencies do not match transaction valuation",
